@@ -6,7 +6,7 @@
 #
 # -----------------------------------------------------------------------------
 # kaa.beacon.server - A virtual filesystem with metadata
-# Copyright (C) 2006 Dirk Meyer
+# Copyright (C) 2006-2007 Dirk Meyer
 #
 # First Edition: Dirk Meyer <dischi@freevo.org>
 # Maintainer:    Dirk Meyer <dischi@freevo.org>
@@ -99,7 +99,7 @@ class Crawler(object):
         Init the Crawler.
         Parameter db is a beacon.db.Database object.
         """
-        self.db = db
+        self._db = db
         Crawler.nextid += 1
         self.num = Crawler.nextid
 
@@ -189,15 +189,22 @@ class Crawler(object):
             # it.
             return True
 
+        if self._db.read_lock.is_locked():
+            # The database is locked now and we may want to change entries.
+            # FIXME: make sure the inotify events still stay in the same order
+            con = self._db.read_lock.signals['unlock'].connect_once
+            con(self._inotify_event, mask, name, *args)
+            return True
+
         # some debugging to find a bug in beacon
         log.info('inotify: event %s for "%s"', mask, name)
-        
-        item = self.db.query(filename=name)
+
+        item = self._db.query_filename(name)
         if not item._beacon_parent.filename in self.monitoring:
             # that is a different monitor, ignore it
             # FIXME: this is a bug (missing feature) in inotify
             return True
-        
+
         if item._beacon_name.startswith('.'):
             # hidden file, ignore except in move operations
             if mask & INotify.MOVE and args:
@@ -213,16 +220,17 @@ class Crawler(object):
 
         if mask & INotify.MOVE and args and item._beacon_id:
             # Move information with source and destination
-            move = self.db.query(filename=args[0])
+            move = self._db.query_filename(args[0])
             if move._beacon_name.startswith('.'):
                 # move to hidden file, delete
                 log.info('inotify: move to hidden file, delete')
                 self._inotify_event(INotify.DELETE, name)
                 return True
+
             if move._beacon_id:
                 # New item already in the db, delete it first
                 log.info('inotify delete: %s', item)
-                self.db.delete_object(move)
+                self._db.delete_object(move)
             changes = {}
             if item._beacon_parent._beacon_id != move._beacon_parent._beacon_id:
                 # Different directory, set new parent
@@ -236,14 +244,15 @@ class Crawler(object):
                 changes['name'] = move._beacon_data['name']
             if changes:
                 log.info('inotify: move: %s', changes)
-                self.db.update_object(item._beacon_id, **changes)
-            self.db.commit()
+                self._db.update_object(item._beacon_id, **changes)
 
             # Now both directories need to be checked again
             self._scan_add(item._beacon_parent, recursive=False)
             self._scan_add(move._beacon_parent, recursive=False)
 
             if not mask & INotify.ISDIR:
+                # commit changes so that the client may get notified
+                self._db.commit()
                 return True
 
             # The directory is a dir. We now remove all the monitors to that
@@ -252,6 +261,8 @@ class Crawler(object):
             self.monitoring.remove(name + '/', recursive=True)
             # now make sure the directory is parsed recursive again
             self._scan_add(move, recursive=True)
+            # commit changes so that the client may get notified
+            self._db.commit()
             return True
 
         # ---------------------------------------------------------------------
@@ -299,13 +310,10 @@ class Crawler(object):
             if name + '/' in self.monitoring:
                 self.monitoring.remove(name + '/', recursive=True)
             return True
-            
+
         # The file does not exist, we need to delete it in the database
-        if self.db.get_object(item._beacon_data['name'],
-                              item._beacon_parent._beacon_id):
-            # Still in the db, delete it
-            log.info('inotify: delete %s', item)
-            self.db.delete_object(item, beacon_immediately=True)
+        log.info('inotify: delete %s', item)
+        self._db.delete_object(item)
 
         # remove directory and all subdirs from the inotify. The directory
         # is gone, so all subdirs are invalid, too.
@@ -316,6 +324,8 @@ class Crawler(object):
             self.monitoring.remove(name + '/', recursive=True)
         # rescan parent directory
         self._scan_add(item._beacon_parent, recursive=False)
+        # commit changes so that the client may get notified
+        self._db.commit()
         return True
 
 
@@ -396,10 +406,14 @@ class Crawler(object):
         # crawler finished
         self._scan_function = None
         self._startup = False
-        log.info('crawler %s finished; took %0.1f seconds.', self.num, time.time() - self._crawl_start_time)
+        log.info('crawler %s finished; took %0.1f seconds.', \
+                 self.num, time.time() - self._crawl_start_time)
         self._crawl_start_time = None
         Crawler.active -= 1
-        self.db.commit()
+
+        # commit changes so that the client may get notified
+        self._db.commit()
+
         if not self._inotify:
             # Inotify is not in use. This means we have to start crawling
             # the filesystem again in 10 seconds using the restart function.
@@ -433,7 +447,7 @@ class Crawler(object):
         if not os.path.exists(directory.filename):
             log.info('unable to scan %s', directory.filename)
             yield []
-            
+
         if directory._beacon_parent and \
                not directory._beacon_parent._beacon_isdir:
             log.warning('parent of %s is no directory item', directory)
@@ -441,10 +455,11 @@ class Crawler(object):
                    directory.filename + '/' in self.monitoring:
                 self.monitoring.remove(directory.filename + '/', recursive=True)
             yield []
-            
+
         # parse directory
-        if parse(self.db, directory, check_image=self._startup):
-            yield kaa.notifier.YieldContinue
+        async = parse(self._db, directory, check_image=self._startup)
+        if isinstance(async, kaa.notifier.InProgress):
+            yield async
 
         # check if it is still a directory
         if not directory._beacon_isdir:
@@ -459,9 +474,10 @@ class Crawler(object):
             # list and with inotify using the realpath (later)
             self.monitoring.add(directory.filename, use_inotify=False)
             dirname = os.path.realpath(directory.filename)
-            directory = self.db.query(filename=dirname)
-            if parse(self.db, directory, check_image=self._startup):
-                yield kaa.notifier.YieldContinue
+            directory = self._db.query_filename(dirname)
+            async = parse(self._db, directory, check_image=self._startup)
+            if isinstance(async, kaa.notifier.InProgress):
+                yield async
 
         # add to monitor list using inotify
         self.monitoring.add(directory.filename)
@@ -469,14 +485,22 @@ class Crawler(object):
         # iterate through the files
         subdirs = []
         counter = 0
-            
-        for child in self.db.query(parent=directory):
+
+        result = self._db.query(parent=directory)
+        if isinstance(result, kaa.notifier.InProgress):
+            yield result
+            result = result()
+        for child in result:
             if child._beacon_isdir:
                 # add directory to list of files to return
                 subdirs.append(child)
                 continue
             # check file
-            counter += parse(self.db, child, check_image=self._startup) * 20
+            async = parse(self._db, child, check_image=self._startup)
+            if isinstance(async, kaa.notifier.InProgress):
+                yield async
+                async = async()
+            counter += async * 20
             while counter >= 20:
                 counter -= 20
                 yield kaa.notifier.YieldContinue
@@ -488,10 +512,13 @@ class Crawler(object):
         if not subdirs:
             # No subdirectories that need to be checked. Add some extra
             # attributes based on the found items (recursive back to parents)
-            self._add_directory_attributes(directory)
+            result = self._add_directory_attributes(directory)
+            if isinstance(result, kaa.notifier.InProgress):
+                yield result
         yield subdirs
 
 
+    @kaa.notifier.yield_execution()
     def _add_directory_attributes(self, directory):
         """
         Add some extra attributes for a directory recursive. This function
@@ -502,7 +529,11 @@ class Crawler(object):
         check_attr = data.keys()[:]
         check_attr.remove('length')
 
-        for child in self.db.query(parent=directory):
+        result = self._db.query(parent=directory)
+        if isinstance(result, kaa.notifier.InProgress):
+            yield result
+            result = result()
+        for child in result:
             data['length'] += child._beacon_data.get('length', 0) or 0
             for attr in check_attr:
                 value = child._beacon_data.get(attr, data[attr])
@@ -533,17 +564,22 @@ class Crawler(object):
                 break
         else:
             # no changes.
-            return True
+            yield True
 
         if 'image' in data:
             # Mark that this image was taken based on this function, later
             # scans can remove it if it differs.
             data['image_from_items'] = True
 
+        while self._db.read_lock.is_locked():
+            yield self._db.read_lock.yield_unlock()
+
         # update directory in database
-        self.db.update_object(directory._beacon_id, **data)
+        self._db.update_object(directory._beacon_id, **data)
         directory._beacon_data.update(data)
 
         # check parent
         if directory._beacon_parent.filename in self.monitoring:
-            self._add_directory_attributes(directory._beacon_parent)
+            result = self._add_directory_attributes(directory._beacon_parent)
+            if isinstance(result, kaa.notifier.InProgress):
+                yield result

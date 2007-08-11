@@ -41,12 +41,12 @@ from kaa.weakref import weakref
 from kaa.notifier import OneShotTimer, Timer, Callback
 
 # kaa.beacon imports
-from kaa.beacon.db import *
 from kaa.beacon.media import medialist
 
 # kaa.beacon server imports
 import parser
 import hwmon
+from db import *
 from monitor import Monitor
 from crawl import Crawler
 from config import config
@@ -74,7 +74,7 @@ class Server(object):
         self.ipc.connect(self)
 
         self._dbdir = dbdir
-        self._db = Database(dbdir, None)
+        self._db = Database(dbdir)
         self._next_client = 0
 
         self._db.register_object_type_attrs("dir",
@@ -107,6 +107,7 @@ class Server(object):
             height = (int, ATTR_SEARCHABLE),
             comment = (unicode, ATTR_KEYWORDS | ATTR_IGNORE_CASE),
             rotation = (int, ATTR_SIMPLE),
+            author = (unicode, ATTR_SIMPLE),
             date = (unicode, ATTR_SEARCHABLE))
 
         # tracks for rom discs or iso files
@@ -193,7 +194,7 @@ class Server(object):
         Return if clients are connected.
         """
         return len(self._clients) > 0
-    
+
 
     # -------------------------------------------------------------
     # hardware monitor callbacks
@@ -223,7 +224,7 @@ class Server(object):
             media.crawler.stop()
             media.crawler = None
 
-    
+
     # -------------------------------------------------------------
     # client RPC API
     # -------------------------------------------------------------
@@ -253,34 +254,56 @@ class Server(object):
         """
         self._db.delete_media(id)
 
-        
+
+    @kaa.rpc.expose('db.lock')
+    def db_lock(self):
+        """
+        Lock the database so clients can read
+        FIXME: if a client locks and dies before unlock the server is dead
+        """
+        self._db.read_lock.lock()
+
+
+    @kaa.rpc.expose('db.unlock')
+    def db_unlock(self):
+        """
+        Unlock the database again
+        """
+        self._db.read_lock.unlock()
+
+
     @kaa.rpc.expose('monitor.directory')
+    @kaa.notifier.yield_execution()
     def monitor_dir(self, directory):
         """
         Monitor a directory in the background. One directories with a monitor
         running will update running query monitors.
         """
-        self._db.commit()
         if not os.path.isdir(directory):
             log.warning("monitor_dir: %s is not a directory." % directory)
-            return False
+            yield False
         # TODO: check if directory is already being monitored.
 
         directory = os.path.realpath(directory)
         data = self._db.query(filename = directory)
+        if isinstance(data, kaa.notifier.InProgress):
+            yield data
+            data = data()
         items = []
         for i in data._beacon_tree():
             if i._beacon_id:
                 break
             items.append(i)
         while items:
-            parser.parse(self._db, items.pop(), store=True)
-        self._db.commit()
+            async = parser.parse(self._db, items.pop())
+            if isinstance(async, kaa.notifier.InProgress):
+                yield async
         log.info('monitor %s on %s', directory, data._beacon_media)
         data._beacon_media.crawler.append(data)
 
 
     @kaa.rpc.expose('monitor.add')
+    @kaa.notifier.yield_execution()
     def monitor_add(self, client_id, request_id, query):
         """
         Create a monitor object to monitor a query for a client.
@@ -288,7 +311,11 @@ class Server(object):
         log.info('add monitor %s', query)
         if query and 'parent' in query:
             type, id = query['parent']
-            query['parent'] = self._db.query(type=type, id=id)[0]
+            result = self._db.query(type=type, id=id)[0]
+            if isinstance(result, kaa.notifier.InProgress):
+                yield result
+                result = result()
+            query['parent'] = result
 
         for id, client, monitors in self._clients:
             if id == client_id:
@@ -320,33 +347,67 @@ class Server(object):
 
 
     @kaa.rpc.expose('item.update')
+    @kaa.notifier.yield_execution()
     def update(self, items):
         """
         Update items from the client.
         """
+        while self._db.read_lock.is_locked():
+            yield self._db.read_lock.yield_unlock()
         for dbid, attributes in items:
             self._db.update_object(dbid, **attributes)
+        # commit to update monitors
         self._db.commit()
 
 
     @kaa.rpc.expose('item.request')
+    @kaa.notifier.yield_execution()
     def request(self, filename):
         """
         Request item data.
         """
-        self._db.commit()
         data = self._db.query(filename=filename)
+        if isinstance(data, kaa.notifier.InProgress):
+            yield data
+            data = data()
         items = []
         for i in data._beacon_tree():
             if i._beacon_id:
                 break
             items.append(i)
         while items:
-            parser.parse(self._db, items.pop(), store=True)
-        self._db.commit()
-        return data._beacon_data
+            async = parser.parse(self._db, items.pop())
+            if isinstance(async, kaa.notifier.InProgress):
+                yield async
+        yield data._beacon_data
 
 
+    @kaa.rpc.expose('item.create')
+    @kaa.notifier.yield_execution()
+    def item_create(self, type, parent, **kwargs):
+        """
+        Create a new item.
+        """
+        data = self._db.query(id=parent)
+        if isinstance(data, kaa.notifier.InProgress):
+            yield data
+            data = data()
+        while self._db.read_lock.is_locked():
+            yield self._db.read_lock.yield_unlock()
+        yield self._db.add_object(type, parent=parent, **kwargs)
+
+    
+    @kaa.rpc.expose('item.delete')
+    @kaa.notifier.yield_execution()
+    def item_delete(self, id):
+        """
+        Create a new item.
+        """
+        while self._db.read_lock.is_locked():
+            yield self._db.read_lock.yield_unlock()
+        self._db.delete_object(id)
+
+    
     @kaa.rpc.expose('beacon.shutdown')
     def shutdown(self):
         """
@@ -360,7 +421,7 @@ class Server(object):
         """
         Eject media with the given id
         """
-        dev = medialist.get(id)
+        dev = medialist.get_by_media_id(id)
         if not dev:
             log.error('eject: no device %s' % id)
             return False

@@ -6,7 +6,7 @@
 #
 # -----------------------------------------------------------------------------
 # kaa.beacon - A virtual filesystem with metadata
-# Copyright (C) 2006 Dirk Meyer
+# Copyright (C) 2006-2007 Dirk Meyer
 #
 # First Edition: Dirk Meyer <dischi@freevo.org>
 # Maintainer:    Dirk Meyer <dischi@freevo.org>
@@ -145,6 +145,15 @@ def monitor(directory):
     return _client.monitor(directory)
 
 
+def add_item(url, type, parent, **kwargs):
+    """
+    Add an item to the database (not to be used for files).
+    """
+    if not _client:
+        connect()
+    return _client.add_item(url, type, parent, **kwargs)
+
+    
 def register_file_type_attrs(name, **kwargs):
     """
     Register new attrs and types for files.
@@ -172,7 +181,7 @@ def get_db_info():
         connect()
     while not _client.status == CONNECTED:
         kaa.notifier.step()
-    return _client.db.get_db_info()
+    return _client._beacon_db_information()
 
 
 def delete_media(id):

@@ -8,7 +8,7 @@
 #
 # -----------------------------------------------------------------------------
 # kaa.beacon - A virtual filesystem with metadata
-# Copyright (C) 2006 Dirk Meyer
+# Copyright (C) 2006-2007 Dirk Meyer
 #
 # First Edition: Dirk Meyer <dischi@freevo.org>
 # Maintainer:    Dirk Meyer <dischi@freevo.org>
@@ -56,66 +56,42 @@ MAX_BUFFER_CHANGES = 30
 from file import File as create_file
 from item import create_item
 
+def create_by_type(data, parent, overlay=False, isdir=False):
+    if data.get('scheme') not in (None, 'file'):
+        return create_item(data, parent)
+    return create_file(data, parent, overlay, isdir)
+
+def create_directory(data, parent):
+    return create_file(data, parent, isdir=True)
 
 class Database(object):
     """
     A kaa.db based database.
     """
 
-    def __init__(self, dbdir, client):
+    # functions that will be given by the server
+    delete_object = add_object = commit = None
+
+    def __init__(self, dbdir):
         """
         Init function
         """
         # internal db dir, it contains the real db and the
         # overlay dir for the beacon
-        self.dbdir = dbdir
-
-        # remember client
-        # no client == server == write access
-        self.client = client
+        self._db_directory = dbdir
 
         # handle changes in a list and add them to the database
         # on commit.
         self.changes = []
 
         # create db
-        if not os.path.isdir(self.dbdir):
-            os.makedirs(self.dbdir)
-        self._db = db.Database(self.dbdir + '/db')
+        if not os.path.isdir(self._db_directory):
+            os.makedirs(self._db_directory)
+        self._db = db.Database(self._db_directory + '/db')
 
         self.signals = {
             'changed': kaa.notifier.Signal()
             }
-
-        if self.client:
-            # client mode, nothing more to do
-            return
-
-        # register basic types
-        self._db.register_object_type_attrs("dir",
-            # This multi-column index optimizes queries on (name,parent) which
-            # is done for every object add/update, so must be fast.  All
-            # object types will have this combined index.
-            [("name", "parent_type", "parent_id")],
-            name = (str, ATTR_KEYWORDS),
-            overlay = (bool, ATTR_SIMPLE),
-            media = (int, ATTR_INDEXED),
-            mtime = (int, ATTR_SIMPLE))
-
-        self._db.register_object_type_attrs("file",
-            [("name", "parent_type", "parent_id")],
-            name = (str, ATTR_KEYWORDS),
-            overlay = (bool, ATTR_SIMPLE),
-            media = (int, ATTR_INDEXED),
-            mtime = (int, ATTR_SIMPLE))
-
-        self._db.register_object_type_attrs("media",
-            [("name", "parent_type", "parent_id")],
-            name = (str, ATTR_KEYWORDS),
-            content = (str, ATTR_SIMPLE))
-
-        # commit
-        self._db.commit()
 
 
     # -------------------------------------------------------------------------
@@ -133,14 +109,10 @@ class Database(object):
         query functions ins this class depending on the query. This function
         may raise an AsyncProcess exception.
         """
-        # make sure db is ok
-        if not self.client:
-            self.commit()
-
         qlen = len(query)
         if not 'media' in query:
             # query only media we have right now
-            query['media'] = db.QExpr('in', medialist.idlist)
+            query['media'] = db.QExpr('in', medialist.get_all_beacon_ids())
         else:
             if query['media'] == 'ignore':
                 del query['media']
@@ -149,7 +121,7 @@ class Database(object):
         # do query based on type
         if 'filename' in query and qlen == 1:
             fname = os.path.realpath(query['filename'])
-            return self._db_query_filename(fname)
+            return self.query_filename(fname)
         if 'id' in query and qlen == 1:
             return self._db_query_id(query['id'])
         if 'parent' in query and 'recursive' in query and qlen == 2:
@@ -168,26 +140,34 @@ class Database(object):
         return self._db_query_raw(query)
 
 
-    def query_media(self, id, media):
+    def query_media(self, media):
         """
-        Get media and the root filesystem. If 'media' is None,
-        the root filesystem is also None. You have to pass a media
-        object to get media and root filesystem.
-        Returns dbinfo, beacon_id, root
+        Get media information.
         """
+        if hasattr(media, 'id'):
+            # object is a media object
+            id = media.id
+        else:
+            # object is only an id
+            id = media
+            media = None
         result = self._db.query(type="media", name=id)
         if not result:
-            return None, None, None
+            return None
         result = result[0]
-        id = ('media', result['id'])
         if not media:
-            return result, id, None
+            return result
         # TODO: it's a bit ugly to set url here, but we have no other choice
         media.url = result['content'] + '://' + media.mountpoint
-        root = self._db.query(parent=id)[0]
+        media.overlay = os.path.join(self._db_directory, id)
+        dbid = ('media', result['id'])
+        media._beacon_id = dbid
+        root = self._db.query(parent=dbid)[0]
         if root['type'] == 'dir':
-            return result, id, create_file(root, media, isdir=True)
-        return result, id, create_item(root, media)
+            media.root = create_directory(root, media)
+        else:
+            media.root = create_item(root, media)
+        return result
 
 
     @kaa.notifier.yield_execution()
@@ -199,14 +179,14 @@ class Database(object):
         if parent._beacon_islink:
             # WARNING: parent is a link, we need to follow it
             dirname = os.path.realpath(parent.filename)
-            parent = self._db_query_filename(dirname)
+            parent = self.query_filename(dirname)
             if not parent._beacon_isdir:
                 # oops, this is not directory anymore, return nothing
                 yield []
         else:
             dirname = parent.filename[:-1]
 
-        listing = parent._beacon_listdir(async=self.client)
+        listing = parent._beacon_listdir(async=True)
 
         if isinstance(listing, kaa.notifier.InProgress):
             # oops, something takes more time than we had in mind,
@@ -216,7 +196,7 @@ class Database(object):
 
         items = []
         if parent._beacon_id:
-            items = [ create_file(i, parent, isdir=i['type'] == 'dir') \
+            items = [ create_by_type(i, parent, isdir=i['type'] == 'dir') \
                       for i in self._db.query(parent = parent._beacon_id) ]
 
         # sort items based on name. The listdir is also sorted by name,
@@ -229,47 +209,56 @@ class Database(object):
 
         pos = -1
 
-        for pos, (f, fullname, overlay, stat_res) in enumerate(listing[0]):
+        # If we have a delete_object function we will use it. This means
+        # we have to wait for a lock. The server needs to provide
+        # the read_lock variable. I known this is ugly but I do not
+        # want to duplicate this whole function just for this.
+        while self.delete_object and self.read_lock.is_locked():
+            yield self.read_lock.yield_unlock()
+
+        pos = -1
+        for f, fullname, overlay, stat_res in listing[0]:
+            pos += 1
             isdir = stat.S_ISDIR(stat_res[stat.ST_MODE])
             if pos == len(items):
                 # new file at the end
                 if isdir:
                     if not overlay:
-                        items.append(create_file(f, parent, isdir=True))
+                        items.append(create_directory(f, parent))
                     continue
-                items.append(create_file(f, parent, overlay, isdir=False))
+                items.append(create_file(f, parent, overlay))
                 continue
             while pos < len(items) and f > items[pos]._beacon_name:
                 # file deleted
                 i = items[pos]
+                if i.get('scheme') not in (None, 'file'):
+                    pos += 1
+                    continue
                 items.remove(i)
-                if not self.client:
-                    # no client == server == write access
+                if self.delete_object:
                     # delete from database by adding it to the internal changes
                     # list. It will be deleted right before the next commit.
-                    self.changes.append(('delete', i, {}, None))
-                # delete
+                    self.delete_object(i)
             if pos < len(items) and f == items[pos]._beacon_name:
                 # same file
                 continue
             # new file
             if isdir:
                 if not overlay:
-                    items.insert(pos, create_file(f, parent, isdir=True))
+                    items.insert(pos, create_directory(f, parent))
                 continue
-            items.insert(pos, create_file(f, parent, overlay, isdir=False))
+            items.insert(pos, create_file(f, parent, overlay))
 
         if pos + 1 < len(items):
             # deleted files at the end
-            if not self.client:
-                # no client == server == write access
-                for i in items[pos+1-len(items):]:
-                    self.changes.append(('delete', i, {}, None))
-            items = items[:pos+1-len(items)]
-
-        if self.changes:
-            # need commit because some items were deleted from the db
-            self.commit()
+            for i in items[pos+1-len(items):]:
+                if i.get('scheme') not in (None, 'file'):
+                    continue
+                items.remove(i)
+                if self.delete_object:
+                    # delete from database by adding it to the internal changes
+                    # list. It will be deleted right before the next commit.
+                    self.delete_object(i)
 
         # no need to sort the items again, they are already sorted based
         # on name, let us keep it that way. And name is unique in a directory.
@@ -289,17 +278,14 @@ class Database(object):
         if parent._beacon_islink:
             # WARNING: parent is a link, we need to follow it
             dirname = os.path.realpath(parent.filename)
-            parent = self._db_query_filename(dirname)
+            parent = self.query_filename(dirname)
             if not parent._beacon_isdir:
                 # oops, this is not directory anymore, return nothing
                 yield []
         else:
             dirname = parent.filename[:-1]
 
-        async = False
-        if self.client:
-            async = True
-            timer = time.time()
+        timer = time.time()
 
         items = []
         # A list of all directories we will look at. If a link is in the
@@ -311,12 +297,12 @@ class Database(object):
                 continue
             for i in self._db.query(parent = parent._beacon_id):
                 if i['type'] == 'dir':
-                    child = create_file(i, parent, isdir=True)
+                    child = create_directory(i, parent)
                     if not child._beacon_islink:
                         directories.append(child)
                 else:
-                    items.append(create_file(i, parent, isdir=False))
-            if async and time.time() > timer + 0.1:
+                    items.append(create_by_type(i, parent))
+            if time.time() > timer + 0.1:
                 # we are in async mode and already use too much time.
                 # call yield YieldContinue at this point to continue
                 # later.
@@ -329,44 +315,6 @@ class Database(object):
         yield items
 
 
-    def _db_query_filename(self, filename):
-        """
-        Return item for filename, can't be in overlay
-        """
-        dirname = os.path.dirname(filename)
-        basename = os.path.basename(filename)
-        m = medialist.mountpoint(filename)
-        if not m:
-            raise AttributeError('mountpoint not found')
-
-        if (os.path.isdir(filename) and m != medialist.mountpoint(dirname)) \
-           or filename == '/':
-            # the filename is the mountpoint itself
-            e = self._db.query(parent=m._beacon_id, name='')
-            return create_file(e[0], m, isdir=True)
-        parent = self._get_dir(dirname, m)
-        if parent._beacon_id:
-            # parent is a valid db item, query
-            e = self._db.query(parent=parent._beacon_id, name=basename)
-            if e:
-                # entry is in the db
-                return create_file(e[0], parent, isdir=e[0]['type'] == 'dir')
-        return create_file(basename, parent, isdir=os.path.isdir(filename))
-
-
-    @kaa.notifier.yield_execution()
-    def _db_query_dirname(self, dirname, **query):
-        """
-        Return items in a directory
-        """
-        dobject = self._db_query_filename(dirname)
-        if isinstance(dobject, kaa.notifier.InProgress):
-            yield dobject
-            dobject = dobject()
-        query['parent'] = dobject
-        yield self.query(**query)
-
-
     def _db_query_id(self, (type, id), cache=None):
         """
         Return item based on (type,id). Use given cache if provided.
@@ -375,10 +323,10 @@ class Database(object):
         # now we need a parent
         if i['name'] == '':
             # root node found, find correct mountpoint
-            m = medialist.beacon_id(i['parent'])
+            m = medialist.get_by_beacon_id(i['parent'])
             if not m:
                 raise AttributeError('bad media %s' % str(i['parent']))
-            return create_file(i, m, isdir=True)
+            return create_directory(i, m)
 
         # query for parent
         pid = i['parent']
@@ -391,12 +339,8 @@ class Database(object):
 
         if i['type'] == 'dir':
             # it is a directory, make a dir item
-            return create_file(i, parent, isdir=True)
-        if parent._beacon_isdir:
-            # parent is dir, this item is not
-            return create_file(i, parent)
-        # neither dir nor file, something else
-        return create_item(i, parent)
+            return create_directory(i, parent)
+        return create_by_type(i, parent)
 
 
     def _db_query_attr(self, query):
@@ -424,6 +368,8 @@ class Database(object):
         parent structure. For files / directories this function won't check
         if they are still there.
         """
+        # FIXME: this function needs optimizing; adds at least 6 times the
+        # overhead on top of kaa.db.query
         result = []
         cache = {}
         counter = 0
@@ -446,16 +392,13 @@ class Database(object):
             # create item
             if r['type'] == 'dir':
                 # it is a directory, make a dir item
-                result.append(create_file(r, parent, isdir=True))
-            elif parent._beacon_isdir:
-                # parent is dir, this item is not
-                result.append(create_file(r, parent))
+                result.append(create_directory(r, parent))
             else:
-                # neither dir nor file, something else
-                result.append(create_item(r, parent))
+                # file or something else
+                result.append(create_by_type(r, parent))
 
             counter += 1
-            if self.client and not counter % 50 and time.time() > timer + 0.05:
+            if not counter % 50 and time.time() > timer + 0.05:
                 # we are in async mode and already use too much time.
                 # call yield YieldContinue at this point to continue
                 # later.
@@ -468,222 +411,33 @@ class Database(object):
         yield result
 
 
-    # -------------------------------------------------------------------------
-    # Database access
-    #
-    # The database functions are only called for the server.
-    # (Except get_db_info which is only for debugging)
-    # -------------------------------------------------------------------------
-
-    def commit(self, force=False):
+    def query_filename(self, filename):
         """
-        Commit changes to the database. All changes in the internal list
-        are done first.
+        Return item for filename, can't be in overlay. This function will
+        never return an InProgress object.
         """
-        if self.client or (not self.changes and not force):
-            return
+        dirname = os.path.dirname(filename)
+        basename = os.path.basename(filename)
+        m = medialist.get_by_directory(filename)
+        if not m:
+            raise AttributeError('mountpoint not found')
 
-        # get time for debugging
-        t1 = time.time()
-        # set internal variables
-        changes = self.changes
-        changed_id = []
-        self.changes = []
-        callbacks = []
-
-        # NOTE: Database will be locked now
-
-        # walk through the list of changes
-        for function, arg1, kwargs, callback in changes:
-            if function == 'delete':
-                # delete items and all subitems from the db. The delete function
-                # will return all ids deleted, callbacks are not allowed, so
-                # we can just continue
-                changed_id.extend(self._delete(arg1))
-                continue
-            if function == 'update':
-                try:
-                    self._db.update_object(arg1, **kwargs)
-                    changed_id.append(arg1)
-                except Exception, e:
-                    log.error('%s not in the db: %s: %s' % (arg1, e, kwargs))
-                continue
-            if function == 'add':
-                # arg1 is the type, kwargs should contain parent and name, the
-                # result is the return of a query, so it has (type, id)
-                result = self._db.add_object(arg1, **kwargs)
-                changed_id.append((result['type'], result['id']))
-                if callback:
-                    callbacks.append((callback, result))
-                continue
-            # programming error, this should never happen
-            log.error('unknown change <%s>' % function)
-
-        # db commit
-        t2 = time.time()
-        self._db.commit()
-        t3 = time.time()
-
-        # NOTE: Database is unlocked again
-
-        # some time debugging
-        log.info('db.commit %d items; %.5fs (kaa.db commit %.5f / %.2f%%)' % \
-                 (len(changes), t3-t1, t3-t2, (t3-t2)/(t3-t1)*100.0))
-        # now call all callbacks
-        for callback, result in callbacks:
-            callback(result)
-        # fire db changed signal
-        self.signals['changed'].emit(changed_id)
+        if (os.path.isdir(filename) and \
+            m != medialist.get_by_directory(dirname)) or filename == '/':
+            # the filename is the mountpoint itself
+            e = self._db.query(parent=m._beacon_id, name='')
+            return create_directory(e[0], m)
+        parent = self._query_filename_get_dir(dirname, m)
+        if parent._beacon_id:
+            # parent is a valid db item, query
+            e = self._db.query(parent=parent._beacon_id, name=basename)
+            if e:
+                # entry is in the db
+                return create_file(e[0], parent, isdir=e[0]['type'] == 'dir')
+        return create_file(basename, parent, isdir=os.path.isdir(filename))
 
 
-    def get_object(self, name, parent):
-        """
-        Get the object with the given type, name and parent. This function will
-        look at the pending commits and also in the database.
-        """
-        for func, type, kwargs, callback  in self.changes:
-            if func == 'add' and 'name' in kwargs and kwargs['name'] == name \
-                   and 'parent' in kwargs and kwargs['parent'] == parent:
-                self.commit()
-                break
-        result = self._db.query(name=name, parent=parent)
-        if result:
-            return result[0]
-        return None
-
-
-    def add_object(self, type, metadata=None, beacon_immediately=False,
-                   callback=None, **kwargs):
-        """
-        Add an object to the db. If the keyword 'beacon_immediately' is set,
-        the object will be added now and the db will be locked until the next
-        commit. To avoid locking, do not se the keyword, but this means that a
-        requery on the object won't find it before the next commit.
-        """
-        if metadata:
-            for key in self._db._object_types[type][1].keys():
-                if metadata.has_key(key) and metadata[key] != None and \
-                       not key in kwargs:
-                    kwargs[key] = metadata[key]
-
-        if beacon_immediately:
-            self.commit()
-            return self._db.add_object(type, **kwargs)
-        self.changes.append(('add', type, kwargs, callback))
-        if len(self.changes) > MAX_BUFFER_CHANGES:
-            self.commit()
-
-
-    def update_object(self, (type, id), metadata=None,
-                      beacon_immediately=False, **kwargs):
-        """
-        Update an object to the db. If the keyword 'beacon_immediately' is set,
-        the object will be updated now and the db will be locked until the next
-        commit. To avoid locking, do not se the keyword, but this means that a
-        requery on the object will return the old values.
-        """
-        if metadata:
-            for key in self._db._object_types[type][1].keys():
-                if metadata.has_key(key) and metadata[key] != None and \
-                       not key == 'media':
-                    kwargs[key] = metadata[key]
-
-        if 'media' in kwargs:
-            del kwargs['media']
-        if isinstance(kwargs.get('media'), str):
-            raise SystemError
-        self.changes.append(('update', (type, id), kwargs, None))
-        if len(self.changes) > MAX_BUFFER_CHANGES or beacon_immediately:
-            self.commit()
-
-
-    def update_object_type(self, (type, id), new_type):
-        old_entry = self._db.query(type=type, id=id)
-        if not old_entry:
-            # already changed by something
-            return None
-        # FIXME: crashes with new ObjectRows code
-        old_entry = dict(old_entry[0])
-
-        # copy metadata to new object
-        metadata = {}
-        for key in self._db._object_types[new_type][1].keys():
-            if not key == 'id' and key in old_entry:
-                metadata[key] = old_entry[key]
-        # add object to db keep the db in sync
-        self.commit()
-
-        metadata = self._db.add_object(new_type, **metadata)
-        new_beacon_id = (type, metadata['id'])
-        self._db.commit()
-
-        # move all children to new parent
-        for child in self._db.query(parent=(type, id)):
-            log.warning('untested code: mode parent for %s' % child)
-            id = (child['type'], child['id'])
-            self._db.update_object(id, parent=new_beacon_id)
-
-        # delete old and sync the db again
-        self.delete_object((type, id))
-        self.commit()
-        return metadata
-
-
-    def delete_object(self, item_or_type_id_list, beacon_immediately=False):
-        self.changes.append(('delete', item_or_type_id_list, {}, None))
-        if len(self.changes) > MAX_BUFFER_CHANGES or beacon_immediately:
-            self.commit()
-
-
-    def object_types(self):
-        """
-        Return the list of object types
-        """
-        return self._db._object_types
-
-
-    def register_object_type_attrs(self, type, *args, **kwargs):
-        """
-        Register a new object with attributes. Special keywords like name and
-        mtime are added by default.
-        """
-        kwargs['name'] = (str, ATTR_KEYWORDS)
-        # TODO: mtime may not e needed for subitems like tracks
-        kwargs['overlay'] = (bool, ATTR_SIMPLE)
-        kwargs['media'] = (int, ATTR_INDEXED)
-        if not type.startswith('track_'):
-            kwargs['mtime'] = (int, ATTR_SIMPLE)
-            kwargs['image'] = (str, ATTR_SIMPLE)
-        indices = [("name", "parent_type", "parent_id")]
-        return self._db.register_object_type_attrs(type, indices, *args,
-                                                   **kwargs)
-
-
-    def get_db_info(self):
-        """
-        Returns information about the database.  Look at
-        kaa.db.Database.get_db_info() for more details.
-        """
-        return self._db.get_db_info()
-
-
-    def delete_media(self, id):
-        """
-        Delete media with the given id.
-        """
-        log.info('delete media %s', id)
-        self.commit()
-        for child in self._db.query(media = id):
-            self._db.delete_object((str(child['type']), child['id']))
-        self._db.delete_object(('media', id))
-        self._db.commit()
-
-
-    # -------------------------------------------------------------------------
-    # Internal functions
-    # -------------------------------------------------------------------------
-
-    def _get_dir(self, dirname, media):
+    def _query_filename_get_dir(self, dirname, media):
         """
         Get database entry for the given directory. Called recursive to
         find the current entry. Do not cache results, they could change.
@@ -691,45 +445,44 @@ class Database(object):
         if dirname == media.mountpoint or dirname +'/' == media.mountpoint:
             # we know that '/' is in the db
             c = self._db.query(type="dir", name='', parent=media._beacon_id)[0]
-            return create_file(c, media, isdir=True)
+            return create_directory(c, media)
 
         if dirname == '/':
             raise RuntimeError('media %s not found' % media)
 
-        parent = self._get_dir(os.path.dirname(dirname), media)
+        parent = self._query_filename_get_dir(os.path.dirname(dirname), media)
         name = os.path.basename(dirname)
 
         if not parent._beacon_id:
-            return create_file(name, parent, isdir=True)
+            return create_directory(name, parent)
 
-        current = self._db.query(type="dir", name=name,
-                                 parent=parent._beacon_id)
-        if not current and self.client:
-            return create_file(name, parent, isdir=True)
+        c = self._db.query(type="dir", name=name, parent=parent._beacon_id)
+        if c:
+            return create_directory(c[0], parent)
 
-        if not current:
-            current = self._db.add_object("dir", name=name,
-                                          parent=parent._beacon_id,
-                                          media=media._beacon_id[1])
-            self._db.commit()
-        else:
-            current = current[0]
-        return create_file(current, parent, isdir=True)
+        if not self.add_object:
+            # we have no add_object function. This means we have
+            # to return a dummy object (client)
+            return create_directory(name, parent)
+        # add object to the database.
+        # NOTICE: this function will change the database even when
+        # the db is locked. I do not see a good way around it and
+        # it should not happen often. To make the write lock a very
+        # short time we commit just after adding.
+        c = self.add_object("dir", name=name, parent=parent)
+        if self.read_lock.is_locked():
+            # commit changes
+            self.commit()
+        return create_directory(c, parent)
 
 
-    def _delete(self, entry):
+    # -------------------------------------------------------------------------
+    # Database access
+    # -------------------------------------------------------------------------
+
+    def get_db_info(self):
         """
-        Delete item with the given id from the db and all items with that
-        items as parent (and so on). To avoid internal problems, make sure
-        commit is called just after this function is called.
+        Returns information about the database.  Look at
+        kaa.db.Database.get_db_info() for more details.
         """
-        log.info('delete %s', entry)
-        if isinstance(entry, Item):
-            entry = entry._beacon_id
-        deleted = [ entry ]
-        for child in self._db.query(parent = entry):
-            deleted.extend(self._delete((child['type'], child['id'])))
-
-        # FIXME: if the item has a thumbnail, delete it!
-        self._db.delete_object(entry)
-        return deleted
+        return self._db.get_db_info()

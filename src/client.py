@@ -10,7 +10,7 @@
 #
 # -----------------------------------------------------------------------------
 # kaa.beacon - A virtual filesystem with metadata
-# Copyright (C) 2006 Dirk Meyer
+# Copyright (C) 2006-2007 Dirk Meyer
 #
 # First Edition: Dirk Meyer <dischi@freevo.org>
 # Maintainer:    Dirk Meyer <dischi@freevo.org>
@@ -42,6 +42,7 @@ import logging
 # kaa imports
 import kaa
 import kaa.rpc
+import kaa.strutils
 from kaa.weakref import weakref
 from kaa.notifier import OneShotTimer, Signal
 
@@ -49,6 +50,7 @@ from kaa.notifier import OneShotTimer, Signal
 from db import Database
 from query import Query
 from media import medialist
+from item import Item
 
 # get logging object
 log = logging.getLogger('beacon')
@@ -67,7 +69,7 @@ class Client(object):
     the same machine doing the file scanning and changing of the db.
     """
     def __init__(self):
-        self.db = None
+        self._db = None
 
         self.signals = {
             'connect'   : Signal(),
@@ -84,6 +86,13 @@ class Client(object):
         kaa.signals['shutdown'].connect(self._shutdown)
         self.status = DISCONNECTED
         self._connect()
+
+
+    def __repr__(self):
+        """
+        Convert object to string (usefull for debugging)
+        """
+        return '<beacon.Client>'
 
 
     # -------------------------------------------------------------------------
@@ -114,6 +123,29 @@ class Client(object):
         result = Query(self, **query)
         self._queries.append(weakref(result))
         return result
+
+
+    def add_item(self, url, type, parent, **kwargs):
+        """
+        Add non-file item item.
+        """
+        if self.status == DISCONNECTED:
+            return None
+        if isinstance(url, unicode):
+            url = kaa.strutils.unicode_to_str(url)
+        kwargs['scheme'] = url[:url.find('://')]
+        kwargs['name'] = url
+        i = Item(None, url, kwargs, parent, parent._beacon_media)
+        rpc = self.rpc('item.create', type=type, parent=parent._beacon_id, **kwargs)
+        rpc.connect(i._beacon_database_update)
+        return i
+
+
+    def delete_item(self, item):
+        """
+        Delete non-file item item.
+        """
+        self.rpc('item.delete', item._beacon_id)
 
 
     def monitor(self, directory):
@@ -148,7 +180,7 @@ class Client(object):
         if self.status != DISCONNECTED:
             self.rpc('db.media.delete', id)
 
-        
+
     # -------------------------------------------------------------------------
     # Server connect / disconnect / reconnect handling
     # -------------------------------------------------------------------------
@@ -211,7 +243,7 @@ class Client(object):
                 q.monitoring = False
         self._queries = []
         self.rpc = None
-        self.db = None
+        self._db = None
 
 
     # -------------------------------------------------------------------------
@@ -263,6 +295,23 @@ class Client(object):
         return True
 
 
+    def _beacon_query(self, **kwargs):
+        """
+        Do a query from the db.
+        """
+        self.rpc('db.lock')
+        result = self._db.query(**kwargs)
+        if isinstance(result, kaa.notifier.InProgress):
+            cb = kaa.notifier.Callback(self.rpc, 'db.unlock')
+            # Call args will be the result set of the query.  We don't want to
+            # send this over RPC.
+            cb.set_ignore_caller_args()
+            result.connect(cb)
+        else:
+            self.rpc('db.unlock')
+        return result
+
+
     def _beacon_update(self, item):
         """
         Update item in next main loop interation.
@@ -294,11 +343,22 @@ class Client(object):
         self.rpc('item.update', items)
 
 
-    def __repr__(self):
+    def _beacon_media_information(self, media):
         """
-        Convert object to string (usefull for debugging)
+        Get some basic media information.
+        (similar function in server)
         """
-        return '<beacon.Client>'
+        self.rpc('db.lock')
+        result = self._db.query_media(media)
+        self.rpc('db.unlock')
+        return result
+
+
+    def _beacon_db_information(self):
+        """
+        Get some basic db information for debugging.
+        """
+        return self._db.get_db_info()
 
 
     # -------------------------------------------------------------------------
@@ -311,12 +371,12 @@ class Client(object):
         Callback to pass the database information to the client.
         """
         # read only version of the database
-        self.db = Database(database, self)
+        self._db = Database(database)
         # connect to server notifications
         self.id = id
         self.status = CONNECTED
         new_media = []
-        medialist.connect(self.db, self)
+        medialist.connect(self)
         for id, prop in media:
             new_media.append(medialist.add(id, prop))
         self.signals['connect'].emit()
@@ -362,8 +422,8 @@ class Client(object):
         """
         Notification that the media with the given id changed.
         """
-        if medialist.get(id):
-            medialist.get(id).update(prop)
+        if medialist.get_by_media_id(id):
+            medialist.get_by_media_id(id).update(prop)
             return
         media = medialist.add(id, prop)
         self.signals['media.add'].emit(media)
