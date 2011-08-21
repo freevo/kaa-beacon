@@ -70,6 +70,10 @@ class BeaconFS(fuse.Fuse):
         self._query_update_time = 0
         query.signals["changed"].connect_weak(self._query_changed)
         query.monitor()
+        if kaa.inprogress(query).finished:
+            # Query is already finished, so explicitly call _query_changed()
+            # now to update the filename map.
+            self._query_changed()
 
         fuse.Fuse.__init__(self, *args, **kw)
 
@@ -239,8 +243,7 @@ class BeaconFS(fuse.Fuse):
         Main loop for fuse. This needs to be called in a thread. On fuse
         shutdown, the kaa main loop will be stopped.
         """
-
-        if True:
+        if False:
             # activate for debugging to see a logfile in /tmp/fuselog
             handler = logging.FileHandler('/tmp/fuselog')
             f = logging.Formatter('%(filename)s %(lineno)s: %(message)s')

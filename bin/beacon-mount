@@ -57,10 +57,12 @@ from kaa.beacon.fusefs import BeaconFS, FuseError
 # get logging object
 log = logging.getLogger('beacon')
 
+
 def usage(error_code):
     print 'beacon-mount [options] path [search terms]'
     print 'options:'
     print '-u --umount     umounts a beacon FUSE mountpoint'
+    print '--fg            run beacon-mount in foreground and enable debug'
     print '--type type     searches only the given file types'
     print
     print 'Search terms can be arbitrary keywords or key=value pairs.  e.g.'
@@ -73,12 +75,13 @@ def usage(error_code):
 def main():
     try:
         # read arguments
-        opts = [ 'umount', 'help', 'type=' ]
+        opts = [ 'umount', 'help', 'type=', 'fg' ]
         opts, args = getopt.gnu_getopt(sys.argv[1:], 'hu', opts)
     except getopt.GetoptError:
         usage(1)
 
     qtype = None
+    fg = False
     for o, a in opts:
         if o == '-u':
             # umount
@@ -87,8 +90,14 @@ def main():
             sys.exit(0)
         elif o == '--type':
             qtype = a
+        elif o == '--fg':
+            fg = True
+            logging.getLogger().setLevel(logging.DEBUG)
         elif o in ('--help', '-h'):
             usage(0)
+
+    if not args:
+        usage(1)
 
     mountpt = args.pop(0)
     if not os.path.isdir(mountpt):
@@ -142,9 +151,10 @@ def main():
     database = os.path.dirname((yield kaa.beacon.get_db_info())['file'])
     logfile = os.path.join(database, 'fuse.log')
     # FIXME: should only daemonize when we know fs is mounted.
-    kaa.utils.daemonize(stdout = logfile)
+    if not fg:
+        kaa.utils.daemonize(stdout = logfile)
 
-    thread = kaa.ThreadCallback(fs.main)
+    thread = kaa.ThreadCallable(fs.main)
     thread().exception.connect(lambda dummy: kaa.main.stop())
 
 
