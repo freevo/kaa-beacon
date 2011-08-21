@@ -31,6 +31,12 @@
 
 __all__ = [ 'BurstHandler', 'do_thumbnail' ]
 
+#python imports
+from collections import namedtuple
+import ctypes, ctypes.util
+import os
+import struct
+
 # kaa imports
 import kaa
 
@@ -105,3 +111,81 @@ def do_thumbnail(name):
         if i._do_thumbnail(name):
             return True
     return False
+
+
+statfs_result = namedtuple('statfs_result', 'f_type, f_bsize, f_blocks, f_bfree, f_bavail,'
+                                            'f_files, f_ffree, f_fsid, f_namelen, f_frsize')
+def statfs(path):
+    """
+    A python implementation of statfs(2).
+
+    :param path: mount point of the filesystem to statfs
+    :returns: 10-tuple: filesystem type, optimal transfer block size, total
+              data blocks, blocks free, blocks available to non-root, used file
+              nodes, free file nodes, file system id, max filename length.
+
+    filesystem type is resolved into a string if it is known (e.g. 'nfs' or
+    'ext3'), otherwise it is the integer value as returned by statfs(2).
+    """
+    if not hasattr(statfs, 'libc'):
+        # Store libc, so we only do this once.
+        statfs.libc = ctypes.CDLL(ctypes.util.find_library('c'), use_errno=True)
+
+    # long fs_type, f_bsize; int64_t f_blocks, f_bfree, f_bavail, f_files, f_ffree,
+    # f_fsid; long f_namelen, f_frsize, f_space[5]
+    # TODO: is this structure the same on other platforms or Linux only?
+    fmt = '@2L6Q7L'
+    buf = ctypes.create_string_buffer(struct.calcsize(fmt))
+    ret = statfs.libc.statfs64(path, buf)
+    if ret != 0:
+        errno = ctypes.get_errno()
+        raise OSError(errno, "%s: '%s'" % (os.strerror(errno), path))
+
+    result = struct.unpack(fmt, buf)[:10]
+    fstypes = { 
+        0xadf5: 'adfs',
+        0xadff: 'affs',
+        0x5346414F: 'afs',
+        0x0187: 'autofs',
+        0x73757245: 'coda',
+        0x28cd3d45: 'cramfs',
+        0x453dcd28: 'cramfs',
+        0x64626720: 'debugfs',
+        0x62656572: 'sysfs',
+        0x73636673: 'securityfs',
+        0x858458f6: 'ramfs',
+        0x01021994: 'tmpfs',
+        0x958458f6: 'hugetblfs',
+        0x73717368: 'squashfs',
+        0x414A53: 'efs',
+        0xEF53: 'ext2/ext3',
+        0xabba1974: 'xenfs',
+        0x9123683E: 'btrfs',
+        0xf995e849: 'hpfs',
+        0x9660: 'isofs',
+        0x4004: 'isofs',
+        0x4000: 'isofs',
+        0x07C0: 'jffs',
+        0x72b6: 'jffs2',
+        0x4d44: 'msdos',
+        0x58465342: 'xfs',
+        0x6969: 'nfs',
+        0x6E667364: 'nfsd',
+        0x15013346: 'udf',
+        0x00011954: 'ufs',
+        0x54190100: 'ufs',
+        0x9FA2: 'usbdevfs',
+        0x9fa0: 'procfs',
+        0x002f: 'qnx4',
+        0x52654973: 'reiserfs',
+        0x517B: 'smbfs',
+        0x9fa2: 'usbfs',
+        0xBAD1DEA: 'futexfs',
+        0x2BAD1DEA: 'inotifyfs',
+        0x1cd1: 'devpts',
+        0x534F434B: 'sockfs',
+        0xabababab: 'vmblock',
+        0x65735543: 'fusectl',
+        0x42494e4d: 'binfmt_misc',
+    }
+    return statfs_result(fstypes.get(result[0], result[0]), *result[1:])
