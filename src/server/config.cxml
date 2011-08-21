@@ -78,6 +78,13 @@
                 rescanned each interval.
             </desc>
         </var>
+        <var name="nfsrescan" default="True">
+            <desc>
+                If True, periodically rescans directories on NFS mounts even
+                if INotify is available.  This is useful to detect changes that
+                may occur on other systems which are invisible to INotify.
+            </desc>
+        </var>
     </group>
 
     <var name="discs" type="str" default="">

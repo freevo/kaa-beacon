@@ -206,6 +206,8 @@ class Database(kaa.Object):
         # Remove non-true recursive attribute from query (non-recursive is default).
         if not query.get('recursive', True):
             del query['recursive']
+        # Passed by caller to collect list of deleted items for directory query.
+        garbage = query.pop('garbage', None)
 
         # do query based on type
         if query.keys() == ['filename']:
@@ -216,11 +218,11 @@ class Database(kaa.Object):
         elif sorted(query.keys()) == ['parent', 'recursive']:
             if not query['parent']._beacon_isdir:
                 raise AttributeError('parent is no directory')
-            return self._db_query_dir_recursive(query['parent'])
+            return self._db_query_dir_recursive(query['parent'], garbage)
         elif 'parent' in query:
             if len(query) == 1:
                 if query['parent']._beacon_isdir:
-                    return self._db_query_dir(query['parent'])
+                    return self._db_query_dir(query['parent'], garbage)
             query['parent'] = query['parent']._beacon_id
 
         if 'media' not in query and query.get('type') != 'media':
@@ -273,7 +275,7 @@ class Database(kaa.Object):
 
 
     @kaa.coroutine()
-    def _db_query_dir(self, parent):
+    def _db_query_dir(self, parent, garbage):
         """
         A query to get all files in a directory. The parameter parent is a
         directort object.
@@ -329,6 +331,8 @@ class Database(kaa.Object):
                 # internal changes list. It will be deleted right before the
                 # next commit.
                 self.delete_object(i)
+                if garbage is not None:
+                    garbage.append(i)
 
             if pos < len(items) and f == items[pos]._beacon_name:
                 # same file
@@ -352,6 +356,8 @@ class Database(kaa.Object):
                 # internal changes list. It will be deleted right before the
                 # next commit.
                 self.delete_object(i)
+                if garbage is not None:
+                    garbage.append(i)
 
         # no need to sort the items again, they are already sorted based
         # on name, let us keep it that way. And name is unique in a directory.
@@ -360,7 +366,7 @@ class Database(kaa.Object):
 
 
     @kaa.coroutine()
-    def _db_query_dir_recursive(self, parent):
+    def _db_query_dir_recursive(self, parent, garbage):
         """
         Return all files in the directory 'parent' including files in
         subdirectories (and so on). The directories itself will not be
@@ -386,7 +392,7 @@ class Database(kaa.Object):
         directories = [ parent ]
         while directories:
             parent = directories.pop(0)
-            for i in (yield self._db_query_dir(parent)):
+            for i in (yield self._db_query_dir(parent, garbage)):
                 if i.isdir and not i._beacon_islink:
                     directories.append(child)
                 items.append(i)

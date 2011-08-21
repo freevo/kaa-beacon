@@ -36,7 +36,6 @@ import logging
 
 # kaa imports
 import kaa
-from kaa.strutils import py3_b
 from kaa.inotify import INotify
 
 # kaa.beacon imports
@@ -62,27 +61,46 @@ class MonitorList(dict):
     def __init__(self, inotify):
         dict.__init__(self)
         self._inotify = inotify
+        # A list of directories on NFS or CIFS.  This list only contains the
+        # top-most NFS/CIFS directory so it should not become very large.  For
+        # example, if /mnt/filer/ is an NFS mount we're monitoring, and it
+        # contains subdirs foo/ and bar/, only /mnt/filer/ would be in this
+        # list.
+        self.nfs_items = []
 
-    def add(self, dirname, use_inotify=True):
+    def add(self, dirname, item, use_inotify=True):
         if self._inotify and use_inotify:
-            log.debug('add inotify for %s' % dirname)
+            log.debug('Adding INotify watch for %s' % dirname)
             try:
-                self._inotify.watch(dirname[:-1], WATCH_MASK)
+                self._inotify.watch(dirname, WATCH_MASK)
                 self[dirname] = True
-                return
             except IOError, e:
                 log.error(e)
-        self[dirname] = False
 
-    def remove(self, dirname, recursive=False):
-        if recursive:
-            for d in self.keys()[:]:
-                if d.startswith(dirname):
-                    self.remove(d)
-            return
-        if self.pop(dirname):
-            log.info('remove inotify for %s' % dirname)
-            self._inotify.ignore(dirname[:-1])
+            # Is this dir on a network filesystem?
+            if not any(1 for i in self.nfs_items if dirname.startswith(i.filename)):
+                # Parent isn't already in rescan list, so check to see if this dir is NFS/CIFS.
+                if utils.statfs(dirname).f_type in ('nfs', 'smbfs'):
+                    self.nfs_items.append(item)
+        else:
+            self[dirname] = False
+
+
+    def remove(self, dirname):
+        """
+        Removes the given directory name and all directories under it from
+        monitoring.
+        
+        This is O(1) with respect to the size of the current monitor list.
+        """
+        for d in self.keys():
+            if d.startswith(dirname) and self.pop(d):
+                log.debug('Removing INotify watch for %s', dirname)
+                self._inotify.ignore(dirname)
+
+        # Remove any NFS/CIFS items at or under this path.
+        self.nfs_items = [i for i in self.nfs_items if not i.filename.startswith(dirname)]
+
 
 
 class Crawler(object):
@@ -111,9 +129,6 @@ class Crawler(object):
 
         # set up inotify
         self._inotify = None
-        cb = kaa.WeakCallable(self._inotify_event, INotify.MODIFY)
-        cb.user_args_first = True
-        self._bursthandler = utils.BurstHandler(config.scheduler.growscan, cb)
         if use_inotify:
             try:
                 self._inotify = INotify()
@@ -121,8 +136,14 @@ class Crawler(object):
             except SystemError, e:
                 log.warning('%s', e)
 
-        # create monitoring list with inotify
-        self.monitoring = MonitorList(self._inotify)
+        # Set up the burst handler to simulate a MODIFY INotify event.
+        cb = kaa.WeakCallable(self._inotify_event, INotify.MODIFY)
+        cb.user_args_first = True
+        self._bursthandler = utils.BurstHandler(config.scheduler.growscan, cb)
+
+        # List of directories we are interested in monitoring (either with
+        # INotify or by polling).
+        self.monitors = MonitorList(self._inotify)
 
         # root items that are 'appended'
         self._root_items = []
@@ -134,7 +155,7 @@ class Crawler(object):
         self._scan_dict = {}
         # CoroutineInProgress for self._scanner
         self._coroutine = None
-        self._scan_restart_timer = None
+        self._scan_restart_timer = kaa.WeakOneShotTimer(self._scan_restart)
         self._crawl_start_time = None
 
 
@@ -142,9 +163,9 @@ class Crawler(object):
         """
         Append a directory to be crawled and monitored.
         """
-        log.info('crawl %s', item)
+        log.info('crawler %d: added %s to list', self.num, item)
         self._root_items.append(item)
-        self._scan_add(item, True, force_thumbnail_check=True)
+        self._scan_add(item, recursive=True, force_thumbnail_check=True)
 
 
     def stop(self):
@@ -153,17 +174,15 @@ class Crawler(object):
         """
         kaa.main.signals["shutdown"].disconnect(self.stop)
         # stop running scan process
-        self._scan_list = []
-        self._scan_dict = []
+        del self._scan_list[:]
+        self._scan_dict.clear()
         if self._coroutine:
             self._coroutine.abort()
             self._coroutine = None
         # stop inotify
         self._inotify = None
         # stop restart timer
-        if self._scan_restart_timer:
-            self._scan_restart_timer.stop()
-            self._scan_restart_timer = None
+        self._scan_restart_timer.stop()
 
 
     def __repr__(self):
@@ -195,10 +214,11 @@ class Crawler(object):
             return True
 
         # some debugging to find a bug in beacon
-        log.info('inotify: event %s for "%s" (target=%s)', INotify.mask_to_string(mask), name, target)
+        log.info('crawler %d: inotify event %s for "%s" (target=%s)', self.num,
+                 INotify.mask_to_string(mask), name, target)
 
         item = self._db.query_filename(name)
-        if not item._beacon_parent.filename in self.monitoring:
+        if item._beacon_parent.filename not in self.monitors:
             # that is a different monitor, ignore it
             # FIXME: this is a bug (missing feature) in inotify
             return True
@@ -208,7 +228,7 @@ class Crawler(object):
             if mask & INotify.MOVE and target:
                 # we moved from a hidden file to a good one. So handle
                 # this as a create for the new one.
-                log.info('inotify: handle move as create for %s', target)
+                log.info('crawler %d: inotify: handle move as create for %s', self.num, target)
                 self._inotify_event(INotify.CREATE, target)
             return True
 
@@ -221,13 +241,13 @@ class Crawler(object):
             move = self._db.query_filename(target)
             if move._beacon_name.startswith('.'):
                 # move to hidden file, delete
-                log.info('inotify: move to hidden file, delete')
+                log.info('crawler %d: inotify: move to hidden file, delete', self.num)
                 self._inotify_event(INotify.DELETE, name)
                 return True
 
             if move._beacon_id:
                 # New item already in the db, delete it first
-                log.info('inotify delete: %s', item)
+                log.info('crawler %d: inotify: delete %s', self.num, item)
                 self._db.delete_object(move)
             changes = {}
             if item._beacon_parent._beacon_id != move._beacon_parent._beacon_id:
@@ -241,15 +261,15 @@ class Crawler(object):
                     changes['image'] = move._beacon_data['name']
                 changes['name'] = move._beacon_data['name']
             if changes:
-                log.info('inotify: move: %s', changes)
+                log.info('crawler %d: inotify: move: %s', self.num, changes)
                 self._db.update_object(item._beacon_id, **changes)
 
             # Now both directories need to be checked again
             # FIXME: instead of creating new thumbnails here, we should rename the
             # existing thumbnails from the files in the directory and adjust the
             # metadata in it.
-            self._scan_add(item._beacon_parent, recursive=False, force_thumbnail_check=False)
-            self._scan_add(move._beacon_parent, recursive=True, force_thumbnail_check=False)
+            self._scan_add(item._beacon_parent, recursive=False)
+            self._scan_add(move._beacon_parent, recursive=True)
 
             if not mask & INotify.ISDIR:
                 # commit changes so that the client may get notified
@@ -259,9 +279,9 @@ class Crawler(object):
             # The directory is a dir. We now remove all the monitors to that
             # directory and crawl it again. This keeps track for softlinks that
             # may be different or broken now.
-            self.monitoring.remove(name + '/', recursive=True)
+            self.monitors.remove(name + '/')
             # now make sure the directory is parsed recursive again
-            self._scan_add(move, recursive=True, force_thumbnail_check=False)
+            self._scan_add(move, recursive=True)
             # commit changes so that the client may get notified
             self._db.commit()
             return True
@@ -280,10 +300,10 @@ class Crawler(object):
             if item._beacon_isdir:
                 # It is a directory. Just do a full directory rescan.
                 recursive = not (mask & INotify.MODIFY)
-                self._scan_add(item, recursive=recursive, force_thumbnail_check=False)
+                self._scan_add(item, recursive)
                 if name.lower().endswith('/video_ts'):
                     # it could be a dvd on hd
-                    self._scan_add(item._beacon_parent, recursive=False, force_thumbnail_check=False)
+                    self._scan_add(item._beacon_parent)
                 return True
 
             # Modified item is a file.
@@ -295,7 +315,7 @@ class Crawler(object):
             # parent directory changed, too. Even for a simple modify of an
             # item another item may be affected (xml metadata, images)
             # so scan the file by rechecking the parent dir
-            self._scan_add(item._beacon_parent, recursive=False, force_thumbnail_check=False)
+            self._scan_add(item._beacon_parent)
             return True
 
         # ---------------------------------------------------------------------
@@ -308,23 +328,23 @@ class Crawler(object):
             # since all removable drives which could be umounted are on
             # a different media in beacon. It happens sometimes on system
             # shutdown, so we just ignore this event for now.
-            if name + '/' in self.monitoring:
-                self.monitoring.remove(name + '/', recursive=True)
+            if name + '/' in self.monitors:
+                self.monitors.remove(name + '/')
             return True
 
         # The file does not exist, we need to delete it in the database
-        log.info('inotify: delete %s', item)
+        log.info('crawler %d: inotify: delete %s', self.num, item)
         self._db.delete_object(item)
 
         # remove directory and all subdirs from the inotify. The directory
         # is gone, so all subdirs are invalid, too.
-        if name + '/' in self.monitoring:
+        if name + '/' in self.monitors:
             # FIXME: This is not correct when you deal with softlinks.
             # If you move a directory with relative softlinks, the new
             # directory to monitor is different.
-            self.monitoring.remove(name + '/', recursive=True)
+            self.monitors.remove(name + '/')
         # rescan parent directory
-        self._scan_add(item._beacon_parent, recursive=False, force_thumbnail_check=False)
+        self._scan_add(item._beacon_parent)
         # commit changes so that the client may get notified
         self._db.commit()
         return True
@@ -334,10 +354,18 @@ class Crawler(object):
     # Internal functions - Scanner
     # -------------------------------------------------------------------------
 
-    def _scan_add(self, directory, recursive, force_thumbnail_check):
+    def _scan_add(self, directory, recursive=False, throttle=False, force_thumbnail_check=False, force_scan=False):
         """
         Add a directory to the list of directories to scan, and start
         the scanner coroutine if it's not already running.
+
+        If throttle is True, _scanner() will increase the sleep time before
+        processing the given directory, over and above what the scheduler
+        advises.  This is used for periodic background rescanning for NFS/CIFS
+        directories or when INotify is not available.
+
+        If force_scan is True, we scan the given directory even if it's already
+        in the active monitor list.  This is used for NFS/CIFS directories.
         """
         if directory.filename in self._scan_dict:
             # ok then, already in list and close to the beginning
@@ -350,17 +378,17 @@ class Crawler(object):
             # called from inotify. this means the file can not be in
             # the list as recursive only again from inotify. Add to the
             # beginning of the list, it is important and fast.
-            self._scan_list.insert(0, (directory, False, force_thumbnail_check))
+            self._scan_list.insert(0, (directory, False, throttle, force_thumbnail_check, force_scan))
         else:
             # called from inside the crawler recursive or by massive changes
             # from inotify. In both cases, add to the end of the list because
             # this takes much time.
-            if directory.filename in self.monitoring:
+            if not force_scan and directory.filename in self.monitors:
                 # already scanned and being monitored
                 # TODO: softlink dirs are not handled correctly, they may be
                 # scanned twiece.
                 return False
-            self._scan_list.append((directory, recursive, force_thumbnail_check))
+            self._scan_list.append((directory, True, throttle, force_thumbnail_check, force_scan))
         self._scan_dict[directory.filename] = directory
 
         # start scanning
@@ -372,19 +400,18 @@ class Crawler(object):
     @kaa.coroutine()
     def _scanner(self):
         Crawler.active += 1
-        log.warning('Starting scanner %d', Crawler.active)
+        log.info('crawler %d: starting directory scan', self.num)
         # remember start time for debugging output
         self._crawl_start_time = time.time()
 
         while self._scan_list:
             interval = scheduler.next(config.scheduler.policy) * config.scheduler.multiplier
-            if self._scan_restart_timer:
+            # get next item to scan and start the scanning
+            directory, recursive, throttle, force_thumbnail_check, force_scan = self._scan_list.pop(0)
+            if throttle:
                 # Directory rescanning when INotify is not available.  This is
                 # an idle task, so slow it down.
                 interval *= 5
-
-            # get next item to scan and start the scanning
-            directory, recursive, force_thumbnail_check = self._scan_list.pop(0)
             del self._scan_dict[directory.filename]
 
             ip = self._scan(directory, force_thumbnail_check)
@@ -396,17 +423,16 @@ class Crawler(object):
             if recursive:
                 # add results to the list of files to scan
                 for d in subdirs:
-                    self._scan_add(d, True, force_thumbnail_check=force_thumbnail_check)
+                    self._scan_add(d, True, throttle, force_thumbnail_check, force_scan)
 
         self._scan_completed(aborted=False)
 
-        if not self._inotify:
-            # Inotify is not in use. This means we have to start crawling
-            # the filesystem again in 10 seconds using the restart function.
-            # The restart function will crawl with a much higher intervall to
-            # keep the load on the system down.
-            log.info('schedule rescan')
-            self._scan_restart_timer = kaa.WeakOneShotTimer(self._scan_restart)
+        if not self._inotify or (self.monitors.nfs_items and config.scheduler.nfsrescan):
+            # We need to schedule a rescan either because INotify is not in use or because we
+            # have NFS directories that need to be polled.  Start crawling again in 10 seconds.
+            # During a rescan, the scanner will slow down even beyond what the scheduler
+            # dictates.
+            log.debug('crawler %d: scheduling a rescan', self.num)
             self._scan_restart_timer.start(10)
 
 
@@ -417,7 +443,7 @@ class Crawler(object):
         """
         # crawler finished
         duration = time.time() - self._crawl_start_time
-        log.info('crawler %s %s; took %0.1f seconds.', self.num, 'aborted' if aborted else 'finished', duration)
+        log.info('crawler %d: %s; took %0.1f seconds.', self.num, 'aborted' if aborted else 'finished', duration)
         self._crawl_start_time = None
         Crawler.active -= 1
 
@@ -429,11 +455,18 @@ class Crawler(object):
         """
         Restart the crawler when inotify is not enabled.
         """
-        # reset self.monitoring and add all directories once passed to
-        # this object with 'append' again.
-        self.monitoring = MonitorList(self._inotify)
-        for item in self._root_items:
-            self._scan_add(item, recursive=True, force_thumbnail_check=False)
+        if not self._inotify:
+            # reset self.monitors and add all directories once passed to
+            # this object with 'append' again.
+            self.monitors = MonitorList(self._inotify)
+            for item in self._root_items:
+                self._scan_add(item, recursive=True, throttle=True)
+        elif self.monitors.nfs_items:
+            # Force rescan NFS/CIFS directories.  These are already being
+            # monitored with INotify so we don't clear the MonitorList as with
+            # the non-INotify case above.
+            for item in self.monitors.nfs_items[:]:
+                self._scan_add(item, recursive=True, throttle=True, force_scan=True)
 
 
     @kaa.coroutine()
@@ -441,16 +474,17 @@ class Crawler(object):
         """
         Scan a directory and all files in it, return list of subdirs.
         """
-        log.info('scan directory %s (force thumbnails: %s)', directory.filename, force_thumbnail_check)
+        log.info('crawler %d: scan directory %s (force thumbnails: %s)', self.num,
+                 directory.filename, force_thumbnail_check)
 
         if not os.path.exists(directory.filename):
-            log.info('unable to scan %s', directory.filename)
+            log.warning('crawler %d: %s does not exist; skipping scan.', self.num, directory.filename)
             yield []
 
         if directory._beacon_parent and not directory._beacon_parent._beacon_isdir:
-            log.warning('parent of %s is no directory item', directory)
-            if hasattr(directory, 'filename') and directory.filename + '/' in self.monitoring:
-                self.monitoring.remove(directory.filename + '/', recursive=True)
+            log.warning('crawler %d: parent of %s is not a directory', self.num, directory)
+            if hasattr(directory, 'filename') and directory.filename + '/' in self.monitors:
+                self.monitors.remove(directory.filename + '/')
             yield []
 
         # parse directory
@@ -463,15 +497,15 @@ class Crawler(object):
         if not directory._beacon_isdir:
             if directory.get('scheme') != 'dvd':
                 # Only warn if this isn't a DVD tree.
-                log.warning('%s turned out not to be a directory after parsing', directory)
-            if hasattr(directory, 'filename') and directory.filename + '/' in self.monitoring:
-                self.monitoring.remove(directory.filename + '/', recursive=True)
+                log.warning('crawler %d: %s turned out not to be a directory after parsing', self.num, directory)
+            if hasattr(directory, 'filename') and directory.filename + '/' in self.monitors:
+                self.monitors.remove(directory.filename + '/')
             yield []
 
         if directory._beacon_islink:
             # it is a softlink. Add directory with inotify to the monitor
             # list and with inotify using the realpath (later)
-            self.monitoring.add(directory.filename, use_inotify=False)
+            self.monitors.add(directory.filename, directory, use_inotify=False)
             dirname = os.path.realpath(directory.filename)
             directory = self._db.query_filename(dirname)
             async = parse(self._db, directory, force_thumbnail_check=force_thumbnail_check)
@@ -479,21 +513,21 @@ class Crawler(object):
                 yield async
 
         # add to monitor list using inotify
-        if not directory.filename in self.monitoring:
-            self.monitoring.add(directory.filename)
+        if directory.filename not in self.monitors:
+            self.monitors.add(directory.filename, directory)
 
         # iterate through the files
         subdirs = []
+        garbage = []
         counter = 0
 
         # check if we should crawl deeper
         recursive = not os.path.exists(os.path.join(directory.filename, '.beacon-no-crawl'))
-        
-        for child in (yield self._db.query(parent=directory)):
+        for child in (yield self._db.query(parent=directory, garbage=garbage)):
             if child._beacon_isdir:
                 if child.scanned and not recursive:
                     # FIXME: it would be nice to activate inotify
-                    log.info('skip crawling/monitoring %s', child.filename)
+                    log.info('crawler %d: skip crawling/monitoring %s', self.num, child.filename)
                 else:
                     # add directory to list of files to return
                     subdirs.append(child)
@@ -507,6 +541,13 @@ class Crawler(object):
             delay = scheduler.next(config.scheduler.policy) * config.scheduler.multiplier
             if delay:
                 yield kaa.delay(delay)
+
+        # If any dir objects were implicitly removed during query() above, then
+        # we should remove any existing INotify watch.  This can happen when
+        # nfsrescan=True and directory removal was not observed by INotify.
+        for child in garbage:
+            if child._beacon_isdir:
+                self.monitors.remove(child.filename)
 
         if not subdirs:
             # No subdirectories that need to be checked. Add some extra
@@ -571,5 +612,5 @@ class Crawler(object):
         directory._beacon_data.update(data)
 
         # check parent
-        if directory._beacon_parent.filename in self.monitoring:
+        if directory._beacon_parent.filename in self.monitors:
             yield self._add_directory_attributes(directory._beacon_parent)
