@@ -37,12 +37,12 @@
 # Python imports
 import os
 import logging
+import weakref
 
 # kaa imports
 import kaa
 from kaa.utils import property
 import kaa.rpc
-from kaa.weakref import weakref
 
 # kaa.beacon imports
 from db import Database
@@ -73,8 +73,8 @@ class Client(object):
             'media.remove': kaa.Signal()
         }
 
-        # internal list of active queries
-        self._queries = []
+        # internal list of active queries, mapping query id to a Query object weakref.
+        self._queries = weakref.WeakValueDictionary()
         # internal list of items to update
         self._changed = []
         # add ourself to shutdown handler for correct disconnect
@@ -110,14 +110,15 @@ class Client(object):
 
 
     @kaa.coroutine()
-    def query(self, **query):
+    def query(self, **kwargs):
         """
         Query the database.
         """
-        result = Query(self, **query)
-        self._queries.append(weakref(result))
-        yield kaa.inprogress(result)
-        yield result
+        query = Query(self, **kwargs)
+        # _queries is a WeakValueDictionary, so query will be weakly referenced.
+        self._queries[query.id] = query
+        yield kaa.inprogress(query)
+        yield query
 
 
     def add_item(self, url, type, parent, **kwargs):
@@ -201,10 +202,9 @@ class Client(object):
         Disconnect from the server.
         """
         self.status = SHUTDOWN
-        for q in self._queries:
-            if q != None:
-                q._beacon_monitoring = False
-        self._queries = []
+        for q in self._queries.values():
+            q.monitor(False)
+        self._queries.clear()
         self.rpc = None
         self._db = None
 
@@ -304,14 +304,15 @@ class Client(object):
             # in returning an InProgress object.
             m = yield self._db.medialist.add(id, prop)
             new_media.append(m)
+
         # reconnect query monitors
-        for query in self._queries[:]:
-            if query == None:
-                self._queries.remove(query)
-                continue
-            if query._beacon_monitoring:
-                query._beacon_monitoring = False
-                query.monitor()
+        for query in self._queries.values():
+            if query.monitoring:
+                # We dip our fingers into an internal method of Query to bypass
+                # the test of whether or not monitoring is already True.  We
+                # know it is, but we want to resubmit the query now that we're
+                # connected to the server.
+                query._monitor(True)
         for m in new_media:
             if not m.mountpoint == '/':
                 self.signals['media.add'].emit(m)
@@ -330,21 +331,19 @@ class Client(object):
         dependencies. So this function is needed to find the correct Query
         for a request.
         """
-        for query in self._queries[:]:
-            if query == None:
-                self._queries.remove(query)
-                continue
-            if not query.id == id:
-                continue
-            if msg == 'progress':
-                return query.signals['progress'].emit(*args)
-            if msg == 'changed':
-                return query._beacon_callback_changed(*args)
-            if msg == 'checked':
-                return query.signals['up-to-date'].emit()
-            log.error('Error: unknown message from server: %s' % msg)
-            return
-        log.error('query %s not found', id)
+
+        if id not in self._queries:
+            return log.error('Received notification from beacon server for unknown query id %s', id)
+
+        query = self._queries[id]
+        if msg == 'progress':
+            query.signals['progress'].emit(*args)
+        elif msg == 'changed':
+            query._beacon_callback_changed(*args)
+        elif msg == 'checked':
+            query.signals['up-to-date'].emit()
+        else:
+            log.error('Received notification from beacon server with unknown message type "%s"', msg)
 
 
     @kaa.rpc.expose('device.changed')

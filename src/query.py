@@ -36,6 +36,7 @@ import logging
 
 # kaa imports
 import kaa
+from kaa.utils import property
 
 # kaa.beacon imports
 from item import Item
@@ -82,11 +83,11 @@ class Query(object):
         self.id = Query.NEXT_ID
         Query.NEXT_ID += 1
         # public variables
-        self._beacon_monitoring = False
         self.result = []
         # internal variables
         self._query = query
         self._client = client
+        self._beacon_monitoring = False
         # some shortcuts from the client
         self._rpc = self._client.rpc
         # InProgress object
@@ -106,6 +107,15 @@ class Query(object):
         """
         return self._async
 
+
+    @property
+    def monitoring(self):
+        """
+        True if the beacon server is currently monitoring this query.
+        """
+        return self._beacon_monitoring
+
+
     def monitor(self, enable=True):
         """
         Turn on/off query monitoring
@@ -113,25 +123,11 @@ class Query(object):
         if self._beacon_monitoring == enable:
             # Nothing to do
             return
-        if not self._client.connected:
-            # If the client is not connected yet, it will do this later.
+        if self._client.connected:
+            # If the client is not connected yet, Client._connected() will explicitly
+            # call _monitor() on reconnect.
             # Rememeber that we wanted to connect
-            self._beacon_monitoring = enable
-            return
-        if enable:
-            query = copy.copy(self._query)
-            if 'parent' in query:
-                parent = query['parent']
-                if not parent._beacon_id:
-                    # We need the get the id first. Call the function again
-                    # when there is an id.
-                    parent.scan().connect(self.monitor, enable)
-                    return
-                query['parent'] = parent._beacon_id
-            self._rpc('monitor_add', self._client.id, self.id, query)
-        else:
-            self._rpc('monitor_remove', self._client.id, self.id)
-        # Store current status
+            self._monitor(enable)
         self._beacon_monitoring = enable
 
 
@@ -188,6 +184,25 @@ class Query(object):
     # -------------------------------------------------------------------------
     # Internal API
     # -------------------------------------------------------------------------
+
+    def _monitor(self, enable):
+        """
+        Enable/disable query monitoring without the public-facing checks.
+        """
+        if enable:
+            query = copy.copy(self._query)
+            if 'parent' in query:
+                parent = query['parent']
+                if not parent._beacon_id:
+                    # We need the get the id first. Call the function again
+                    # when there is an id.
+                    parent.scan().connect(self._monitor, enable)
+                    return
+                query['parent'] = parent._beacon_id
+            self._rpc('monitor_add', self._client.id, self.id, query)
+        else:
+            self._rpc('monitor_remove', self._client.id, self.id)
+
 
     @kaa.coroutine()
     def _beacon_start_query(self, query):
