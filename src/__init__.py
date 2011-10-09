@@ -236,3 +236,9 @@ def rpc(command, *args, **kwargs):
     Send a RPC command to the server
     """
     return _client.rpc(command, *args, **kwargs)
+
+def md5url(url, subdir):
+    """
+    Convert url into md5 sum
+    """
+    return _client._db.md5url(url, subdir)
