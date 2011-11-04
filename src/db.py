@@ -574,4 +574,6 @@ class Database(kaa.Object):
         Returns information about the database.  Look at
         kaa.db.Database.get_db_info() for more details.
         """
-        return self._db.get_db_info()
+        info = self._db.get_db_info()
+        info['directory'] = self.directory
+        return info
