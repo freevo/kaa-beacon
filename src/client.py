@@ -184,7 +184,14 @@ class Client(object):
         """
         self.rpc('delete_media', id)
 
-
+    def get_db_info(self):
+        """
+        Gets statistics about the database.
+    
+        :returns: basic database information
+        """
+        return self._db.get_db_info()
+    
     # -------------------------------------------------------------------------
     # Server connect / disconnect / reconnect handling
     # -------------------------------------------------------------------------

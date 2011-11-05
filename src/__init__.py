@@ -49,6 +49,8 @@ from media import Media
 from kaa.db import *
 from query import register_filter, wrap, Query
 
+import plugins
+
 # get logging object
 log = logging.getLogger('beacon')
 
@@ -93,6 +95,8 @@ def require_connect():
                     if not _client.connected:
                         yield kaa.inprogress(signals['connect'])
                     log.info('beacon connected')
+                    for name, interface in plugins.load(_client).items():
+                        globals()[name] = interface
                 except Exception, e:
                     raise ConnectError(e)
             result = func(*args, **kwargs)
@@ -228,7 +232,7 @@ def get_db_info():
 
     :returns: basic database information
     """
-    return _client._db.get_db_info()
+    return _client.get_db_info()
 
 @require_connect()
 def rpc(command, *args, **kwargs):
