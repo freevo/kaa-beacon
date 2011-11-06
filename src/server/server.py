@@ -147,8 +147,9 @@ class Server(object):
         config.load(os.path.join(dbdir, "config"))
         config.watch()
         if scheduler:
-            config.autosave = False
             config.scheduler.policy = scheduler
+        else:
+            config.autosave = True
 
         # commit and wait for the results (there are no results,
         # this code is only used to force waiting until the db is

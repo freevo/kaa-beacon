@@ -111,7 +111,6 @@ class Thumbnailer(object):
         config.load(os.path.join(config_dir, 'config'), sync=True)
         config.watch()
         if scheduler:
-            config.autosave = False
             config.scheduler.policy = scheduler
 
         # video module
