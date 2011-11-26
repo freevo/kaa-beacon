@@ -180,7 +180,10 @@ class Thumbnailer(object):
         job.imagefile = job.imagefile % '/fail/beacon/'
         if not os.path.isdir(os.path.dirname(job.imagefile)):
             os.makedirs(os.path.dirname(job.imagefile), 0700)
-        libthumb.failed(job.filename, job.imagefile)
+        try:
+            libthumb.failed(job.filename, job.imagefile)
+        except Exception, e:
+            log.exception('create_failed')
         return
 
 
@@ -228,8 +231,12 @@ class Thumbnailer(object):
             if not metadata:
                 break
             mtime = metadata.get('Thumb::MTime')
-            if not mtime or mtime != str(os.stat(job.filename)[stat.ST_MTIME]):
-                # needs an update
+            try:
+                if not mtime or mtime != str(os.stat(job.filename)[stat.ST_MTIME]):
+                    # needs an update
+                    break
+            except (IOError, OSError):
+                log.exception('os.stat')
                 break
         else:
             # we did not break out of the loop, this means we have both thumbnails
@@ -248,7 +255,7 @@ class Thumbnailer(object):
                 self.notify_client(job)
                 self.schedule_next()
                 return True
-            except (IOError, ValueError):
+            except (IOError, OSError, ValueError):
                 pass
         try:
             # try normal imlib2 thumbnailing
@@ -257,7 +264,7 @@ class Thumbnailer(object):
             self.notify_client(job)
             self.schedule_next()
             return True
-        except (IOError, ValueError), e:
+        except (IOError, OSError, ValueError), e:
             pass
 
         # maybe this is no image

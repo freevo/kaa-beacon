@@ -217,12 +217,11 @@ PyObject *fail_thumbnail(PyObject *self, PyObject *args)
     imlib_image_set_has_alpha(1);
     imlib_image_clear_color(0, 0, 0, 0);
 
-    if (stat (source, &filestatus) != 0)
-	mtime = 0;
-    else
-	mtime = filestatus.st_mtime;
-
-
+    if (stat (source, &filestatus) != 0) {
+	PyErr_SetString(PyExc_ValueError, "imlib2: unable to save image");
+	return NULL;
+    }
+    
     mtime = filestatus.st_mtime;
 
     snprintf (uri, PATH_MAX, "file://%s", source);
