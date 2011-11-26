@@ -52,7 +52,7 @@ from query import register_filter, wrap, Query
 import plugins
 
 # get logging object
-log = logging.getLogger('beacon')
+log = logging.getLogger('beacon').ensureRootHandler()
 
 # connected client object
 _client = None
