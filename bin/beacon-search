@@ -219,10 +219,9 @@ def main():
 
     if mode == 'list-media':
         for m in (yield kaa.beacon.list_media(available=False)):
-            available = ''
-            if m.device:
-                available = '(%s)' % m.device
-            print '%4d %s %s' % (m.beaconid, m.label, available)
+            available = '(%s)' % m.device if m.device else ''
+            mount = 'mounted at %s' % m.mountpoint if m.mountpoint else 'not mounted'
+            print '%4d %s (%s) %s' % (m.beaconid, m.label, mount, available)
         sys.exit(0)
 
 
