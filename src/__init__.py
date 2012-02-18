@@ -31,6 +31,7 @@
 
 # python imports
 import os
+import sys
 import logging
 
 # kaa imports
@@ -70,6 +71,12 @@ beacon-daemon --verbose all --fg
 
 class ConnectError(Exception):
     pass
+
+def is_server():
+    """
+    Returns True if this is the server process
+    """
+    return 'kaa.beacon.server' in sys.modules
 
 def require_connect():
     """
