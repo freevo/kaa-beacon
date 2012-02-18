@@ -200,6 +200,13 @@ class Server(object):
                 self.clients.remove(client_info)
         self._db.read_lock.unlock(client_info[1], all=True)
 
+    def notify_client(self, msg, *args, **kwargs):
+        """
+        IPC call to all clients
+        """
+        for id, client, monitors in self.clients:
+            client.rpc(msg, *args, **kwargs)
+
     # -------------------------------------------------------------
     # hardware monitor callbacks
     # -------------------------------------------------------------
