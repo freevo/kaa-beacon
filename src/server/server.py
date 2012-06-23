@@ -90,6 +90,7 @@ class Server(object):
 
         self.register_file_type_attrs("video",
             title = (unicode, ATTR_SEARCHABLE | ATTR_IGNORE_CASE | ATTR_INVERTED_INDEX, 'keywords'),
+            poster = (str, kaa.beacon.ATTR_SIMPLE),
             width = (int, ATTR_SIMPLE),
             height = (int, ATTR_SIMPLE),
             length = (float, ATTR_SIMPLE),
