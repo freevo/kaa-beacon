@@ -60,8 +60,8 @@ media_types = {
     kaa.metadata.MEDIA_DIRECTORY: 'dir'
 }
 
-#: parse in a named thread
-# TODO: make this abortable
+# parsing thread
+kaa.register_thread_pool('beacon:metadata', kaa.ThreadPool())
 parse_thread = kaa.ThreadPoolCallable('beacon:metadata', kaa.metadata.parse)
 
 def register(ext, function):
@@ -240,10 +240,16 @@ def _parse(db, item, mtime):
                     log.exception('raw thumbnail')
             for ext in ('.jpg', '.png'):
                 if os.path.isfile(base + ext):
-                    attributes['image'] = base + ext
+                    if type == 'video':
+                        attributes['poster'] = base + ext
+                    else:
+                        attributes['image'] = base + ext
                     break
                 if os.path.isfile(item.filename + ext):
-                    attributes['image'] = item.filename + ext
+                    if type == 'video':
+                        attributes['poster'] = item.filename + ext
+                    else:
+                        attributes['image'] = item.filename + ext
                     break
 
         #

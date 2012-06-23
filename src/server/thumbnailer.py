@@ -52,10 +52,9 @@ import scheduler
 # get logging object
 log = logging.getLogger('beacon.thumbnail')
 
-DOWNLOAD_THREAD = 'beacon.download'
+kaa.register_thread_pool('beacon:download', kaa.ThreadPool())
 
-
-@kaa.threaded(DOWNLOAD_THREAD)
+@kaa.threaded('beacon:download')
 def download(url, filename):
     """
     Download url and store in filename
