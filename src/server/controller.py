@@ -35,7 +35,7 @@ __all__ = [ 'Controller' ]
 import kaa
 
 # kaa.beacon imports
-from hwmon import HardwareMonitor
+from udisk import UDisks
 from parser import parse
 
 
@@ -48,7 +48,7 @@ class Controller(object):
         self._db = db
         self._changed = []
         db.medialist.connect(self)
-        self.hwmon = HardwareMonitor(handler, db, rootfs)
+        self.udisk = UDisks(handler, db, rootfs)
 
     def _beacon_parse(self, item):
         """
@@ -103,7 +103,7 @@ class Controller(object):
         Eject media
         Called by Media objects
         """
-        self.hwmon.eject(media)
+        self.udisk.eject(media)
 
     def _beacon_media_information(self, media):
         """
