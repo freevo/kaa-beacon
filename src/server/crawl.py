@@ -138,7 +138,7 @@ class Crawler(object):
 
         # Set up the burst handler to simulate a MODIFY INotify event.
         cb = kaa.WeakCallable(self._inotify_event, INotify.MODIFY)
-        cb.user_args_first = True
+        cb.init_args_first = True
         self._bursthandler = utils.BurstHandler(config.scheduler.growscan, cb)
 
         # List of directories we are interested in monitoring (either with
