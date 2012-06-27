@@ -61,8 +61,8 @@ media_types = {
 }
 
 # parsing thread
-kaa.register_thread_pool('beacon:metadata', kaa.ThreadPool())
-parse_thread = kaa.ThreadPoolCallable('beacon:metadata', kaa.metadata.parse)
+kaa.register_thread_pool('beacon::metadata', kaa.ThreadPool())
+parse_thread = kaa.ThreadPoolCallable('beacon::metadata', kaa.metadata.parse)
 
 def register(ext, function):
     """
