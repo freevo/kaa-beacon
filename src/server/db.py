@@ -392,3 +392,28 @@ class Database(RO_Database):
         Return the list of object type keys
         """
         return self._db._object_types.keys()
+
+    def set_metadata(self, key, value):
+        """
+        Associate simple key/value pairs with the database.
+
+        :param key: the key name for the metadata; it is required that key
+                    is prefixed with ``appname::`` in order to avoid namespace
+                    collisions.
+        :type key: str or unicode
+        :param value: the value to associate with the given key
+        :type value: str or unicode
+        """
+        self._db.set_metadata(key, value)
+
+    def get_metadata(self, key, default=None):
+        """
+        Fetch metadata previously set by :meth:`~kaa.db.Database.set_metadata`.
+
+        :param key: the key name for the metadata, prefixed with ``appname::``.
+        :type key: str
+        :param default: value to return if key is not found
+        :returns: unicode string containing the value for this key, or 
+                  the ``default`` parameter if the key was not found.
+        """
+        return self._db.get_metadata(key, default)
