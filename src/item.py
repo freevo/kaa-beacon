@@ -184,6 +184,15 @@ class Item(object):
         """
         return self.get('thumbnail')
 
+    def get_thumbnail_attribute(self, attribute):
+        """
+        Return a thumbnail object for the given attribute (e.g. movie
+        poster). The attribute mist be an image filename.
+        """
+        image = self._beacon_data.get(attribute)
+        if image:
+            return Thumbnail(image, self._beacon_media)
+
     def list(self):
         """
         Return a Query object with all subitems of this item. If the
