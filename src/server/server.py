@@ -302,6 +302,7 @@ class Server(object):
             yield False
         # TODO: check if directory is already being monitored.
         directory = os.path.realpath(directory)
+        yield kaa.inprogress(self._db.read_lock)
         data = yield self._db.query(filename = directory)
         log.info('scan directory %s', directory)
         self.scanner.append(data)
@@ -317,6 +318,7 @@ class Server(object):
             yield False
         # TODO: check if directory is already being monitored.
         directory = os.path.realpath(directory)
+        yield kaa.inprogress(self._db.read_lock)
         data = yield self._db.query(filename = directory)
         items = []
         for i in data.ancestors:
