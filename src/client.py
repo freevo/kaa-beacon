@@ -155,6 +155,14 @@ class Client(object):
         return self.status == CONNECTED
 
 
+    def scan(self, directory):
+        """
+        Scan a directory with subdirectories for changes. This is done in
+        the server and will keep the database up to date.
+        """
+        self.rpc('scan_directory', directory)
+
+
     def monitor(self, directory):
         """
         Monitor a directory with subdirectories for changes. This is done in

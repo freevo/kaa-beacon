@@ -119,7 +119,7 @@ class Crawler(object):
     # The id of the last Crawler instance.
     lastid = 0
 
-    def __init__(self, db, use_inotify=True):
+    def __init__(self, db, use_inotify=True, monitor=True):
         """
         Init the Crawler.
         Parameter db is a beacon.db.Database object.
@@ -129,7 +129,7 @@ class Crawler(object):
 
         # set up inotify
         self._inotify = None
-        if use_inotify:
+        if use_inotify and monitor:
             try:
                 self._inotify = INotify()
                 self._inotify.signals['event'].connect(self._inotify_event)
@@ -155,7 +155,10 @@ class Crawler(object):
         self._scan_dict = {}
         # CoroutineInProgress for self._scanner
         self._coroutine = None
-        self._scan_restart_timer = kaa.WeakOneShotTimer(self._scan_restart)
+        if monitor:
+            self._scan_restart_timer = kaa.WeakOneShotTimer(self._scan_restart)
+        else:
+            self._scan_restart_timer = None
         self._crawl_start_time = None
 
 
@@ -163,9 +166,10 @@ class Crawler(object):
         """
         Append a directory to be crawled and monitored.
         """
-        log.info('crawler %d: added %s to list', self.num, item)
+        throttle = not self._scan_restart_timer
+        log.info('crawler %d: added %s to list (throttle=%s)', self.num, item, throttle)
         self._root_items.append(item)
-        self._scan_add(item, recursive=True, force_thumbnail_check=True)
+        self._scan_add(item, recursive=True, force_thumbnail_check=True, throttle=throttle)
 
 
     def stop(self):
@@ -182,7 +186,8 @@ class Crawler(object):
         # stop inotify
         self._inotify = None
         # stop restart timer
-        self._scan_restart_timer.stop()
+        if self._scan_restart_timer:
+            self._scan_restart_timer.stop()
 
 
     def __repr__(self):
@@ -427,7 +432,7 @@ class Crawler(object):
 
         self._scan_completed(aborted=False)
 
-        if not self._inotify or (self.monitors.nfs_items and config.scheduler.nfsrescan):
+        if (not self._inotify or (self.monitors.nfs_items and config.scheduler.nfsrescan)) and self._scan_restart_timer:
             # We need to schedule a rescan either because INotify is not in use or because we
             # have NFS directories that need to be polled.  Start crawling again in 10 seconds.
             # During a rescan, the scanner will slow down even beyond what the scheduler
@@ -446,7 +451,9 @@ class Crawler(object):
         log.info('crawler %d: %s; took %0.1f seconds.', self.num, 'aborted' if aborted else 'finished', duration)
         self._crawl_start_time = None
         Crawler.active -= 1
-
+        # mark current time as complete scan time for all items
+        for item in self._root_items:
+            item['last_crawl'] = int(time.time())
         # commit changes so that the client may get notified
         self._db.commit()
 

@@ -81,6 +81,7 @@ class Server(object):
 
         self._db.register_object_type_attrs("dir",
             image_from_items = (bool, ATTR_SIMPLE),
+            last_crawl = (int, ATTR_SIMPLE),
             title = (unicode, ATTR_SIMPLE),
             artist = (unicode, ATTR_SIMPLE),
             album = (unicode, ATTR_SIMPLE),
@@ -172,6 +173,9 @@ class Server(object):
 
         for dir in config.monitors:
             self.monitor_directory(os.path.expandvars(os.path.expanduser(dir)))
+
+        # scanner
+        self.scanner = Crawler(self._db, monitor=False)
 
     # -------------------------------------------------------------
     # client handling
@@ -284,6 +288,23 @@ class Server(object):
         Unlock the database again
         """
         self._db.read_lock.unlock(client_id)
+
+    @kaa.rpc.expose(coroutine=True)
+    def scan_directory(self, directory):
+        """
+        Scan a directory in the background. Unlike the monitor the
+        directory is not monitored for changes. This is usefull for
+        periodic scans (every day) of directories without many
+        changes.
+        """
+        if not os.path.isdir(directory):
+            log.warning("%s is not a directory." % directory)
+            yield False
+        # TODO: check if directory is already being monitored.
+        directory = os.path.realpath(directory)
+        data = yield self._db.query(filename = directory)
+        log.info('scan directory %s', directory)
+        self.scanner.append(data)
 
     @kaa.rpc.expose(coroutine=True)
     def monitor_directory(self, directory):

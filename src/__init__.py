@@ -166,6 +166,16 @@ def get(filename):
     return _client.get(filename)
 
 @require_connect()
+def scan(directory):
+    """
+    Scan a directory with subdirectories for changes. This is done in
+    the server and will keep the database up to date.
+
+    :param directory: directory path name
+    """
+    return _client.scan(directory)
+
+@require_connect()
 def monitor(directory):
     """
     Monitor a directory with subdirectories for changes. This is done in
