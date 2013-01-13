@@ -275,12 +275,27 @@ class Server(object):
         """
         self._db.delete_media(id)
 
-    @kaa.rpc.expose(add_client=True)
-    def db_lock(self, client_id):
+    @kaa.rpc.expose(coroutine=True, add_client=True)
+    def db_lock(self, client_id, query=None):
         """
-        Lock the database so clients can read
+        Lock the database so clients can read. If query is not None
+        the server will run the given query first. This may wakeup
+        some sleeping disks so the server will block here. This is not
+        a good idea but better block the server than the client.
         """
+        if query:
+            try:
+                if 'parent' in query:
+                    query['parent'] = self._db.query_filename(query['parent'].rstrip('/'))
+                result = self._db.query(**query)
+                if isinstance(result, kaa.InProgress):
+                    yield result
+            except Exception, e:
+                # the query failed. Just ignore it and let the client
+                # run in the same exception and handle it.
+                log.exception('db_lock')
         self._db.read_lock.lock(client_id)
+        yield None
 
     @kaa.rpc.expose(add_client=True)
     def db_unlock(self, client_id):

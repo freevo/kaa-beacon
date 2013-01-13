@@ -229,8 +229,16 @@ class Query(object):
         # we have to wait until we are sure that the db is free for
         # read access or the sqlite client will find a lock and waits
         # some time until it tries again. That time is too long, it
-        # can take up to two seconds.
-        yield self._rpc('db_lock')
+        # can take up to two seconds. We also provide our query here
+        # and let the server run it first. This doubles the query time
+        # but we can be sure that all disks are spinned up when we
+        # call the query on the client.
+        q = copy.copy(query)
+        if 'parent' in q:
+            # change the parent to its filename because we cannot move
+            # beacon.Items over kaa.rpc
+            q['parent'] = q['parent'].filename
+        yield self._rpc('db_lock', q)
         try:
             self.result = self._client._db.query(**query)
             if isinstance(self.result, kaa.InProgress):
