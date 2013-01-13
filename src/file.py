@@ -29,11 +29,14 @@
 #
 # -----------------------------------------------------------------------------
 
+from __future__ import with_statement
+
 # python imports
 import os
 import stat
 import time
 import logging
+import threading
 
 import kaa
 
@@ -43,6 +46,8 @@ from item import Item
 # get logging object
 log = logging.getLogger('beacon')
 
+# lock for thread safety
+rlock = threading.RLock()
 
 class File(Item):
     """
@@ -81,24 +86,27 @@ class File(Item):
         Internal function to list all files in the directory and the overlay
         directory. The result is a pair of entries and file map with entries
         being a list of basename, full filename, is_overlay and stat result.
+
+        Note: this function is thread safe and can be called from the
+        mainloop or any thread. This is needed for the client since
+        listdir() could block for devices that can spin up and down.
         """
-        if self._beacon_listdir_cache and cache and \
-               self._beacon_listdir_cache[0] + 3 > time.time():
-            # use cached result if we have and caching time is less than
-            # three seconds ago
-            return self._beacon_listdir_cache[1:]
-        # FIXME: this could block for everything except media 1. So this
-        # should be done in the hwmon process. But the server doesn't like
-        # an InProgress return in the function.
+        with rlock:
+            if self._beacon_listdir_cache and cache and \
+                   self._beacon_listdir_cache[0] + 3 > time.time():
+                # use cached result if we have and caching time is less than
+                # three seconds ago
+                return self._beacon_listdir_cache[1:]
         try:
             # Try to list the overlay directory
             overlay_results = os.listdir(self._beacon_ovdir)
         except OSError:
             # No overlay
             overlay_results = []
-
         try:
+            # This could block some seconds
             fs_results = os.listdir(self.filename)
+            time.sleep(1)
         except OSError, e:
             log.warning(e)
             self._beacon_listdir_cache = time.time(), [], {}
@@ -132,7 +140,8 @@ class File(Item):
         keys.sort()
         result = [ results_file_map[x] for x in keys ]
         # store in cache
-        self._beacon_listdir_cache = time.time(), result, results_file_map
+        with rlock:
+            self._beacon_listdir_cache = time.time(), result, results_file_map
         return result, results_file_map
 
     @property
