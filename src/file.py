@@ -46,9 +46,6 @@ from item import Item
 # get logging object
 log = logging.getLogger('beacon')
 
-# lock for thread safety
-rlock = threading.RLock()
-
 class File(Item):
     """
     A file-based database item
@@ -91,12 +88,11 @@ class File(Item):
         mainloop or any thread. This is needed for the client since
         listdir() could block for devices that can spin up and down.
         """
-        with rlock:
-            if self._beacon_listdir_cache and cache and \
-                   self._beacon_listdir_cache[0] + 3 > time.time():
-                # use cached result if we have and caching time is less than
-                # three seconds ago
-                return self._beacon_listdir_cache[1:]
+        if self._beacon_listdir_cache and cache and \
+                self._beacon_listdir_cache[0] + 3 > time.time():
+            # use cached result if we have and caching time is less than
+            # three seconds ago
+            return self._beacon_listdir_cache[1:]
         try:
             # Try to list the overlay directory
             overlay_results = os.listdir(self._beacon_ovdir)
@@ -139,8 +135,7 @@ class File(Item):
         keys.sort()
         result = [ results_file_map[x] for x in keys ]
         # store in cache
-        with rlock:
-            self._beacon_listdir_cache = time.time(), result, results_file_map
+        self._beacon_listdir_cache = time.time(), result, results_file_map
         return result, results_file_map
 
     @property
