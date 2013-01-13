@@ -290,7 +290,7 @@ class Database(kaa.Object):
         else:
             dirname = parent.filename[:-1]
 
-        listing = parent._beacon_listdir()
+        listing = yield (kaa.ThreadCallable(parent._beacon_listdir)())
         items = []
         if parent._beacon_id:
             items = [ create_by_type(i, parent, isdir=i['type'] == 'dir') \
