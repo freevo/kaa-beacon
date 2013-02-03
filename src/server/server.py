@@ -101,6 +101,7 @@ class Server(object):
             season = (int, ATTR_SEARCHABLE),
             episode = (int, ATTR_SEARCHABLE),
             hash = (str, ATTR_SIMPLE),
+            stereo = (str, ATTR_SIMPLE),
             timestamp = (int, ATTR_SEARCHABLE))
 
         self.register_file_type_attrs("audio",
