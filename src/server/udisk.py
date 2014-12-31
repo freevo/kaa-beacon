@@ -138,12 +138,16 @@ class UDisks(object):
         path. Note: path is NOT the device path in the filesystem; it
         is the UDisks device path.
         """
-        dbus = self.bus.get_object(OBJ_UDISKS, path)
-        DeviceIsMediaAvailable = dbus.Get(OBJ_DEVICE, 'DeviceIsMediaAvailable')
-        DeviceIsRemovable = dbus.Get(OBJ_DEVICE, 'DeviceIsRemovable')
-        DeviceFile = dbus.Get(OBJ_DEVICE, 'DeviceFile')
-        IdUuid = dbus.Get(OBJ_DEVICE, 'IdUuid')
-        IdLabel = dbus.Get(OBJ_DEVICE, 'IdLabel')
+        try:
+            dbus = self.bus.get_object(OBJ_UDISKS, path)
+            DeviceIsMediaAvailable = dbus.Get(OBJ_DEVICE, 'DeviceIsMediaAvailable')
+            DeviceIsRemovable = dbus.Get(OBJ_DEVICE, 'DeviceIsRemovable')
+            DeviceFile = dbus.Get(OBJ_DEVICE, 'DeviceFile')
+            IdUuid = dbus.Get(OBJ_DEVICE, 'IdUuid')
+            IdLabel = dbus.Get(OBJ_DEVICE, 'IdLabel')
+        except Exception, e:
+            log.error('unable to get dbus information: %s', e)
+            return False
         # Try to figure out if the device is a removable drive beacon
         # can mount or a media player can play. Right now it can
         # detect optical media and USB sticks. A disc connected via
