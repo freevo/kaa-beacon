@@ -590,12 +590,6 @@ class Crawler(object):
             # maybe one item in that directory as our directory image.
             data['image'] = None
 
-        if not directory._beacon_data['image_from_items'] and \
-               directory._beacon_data['image']:
-            # The directory had an image defined and found by the parser.
-            # Delete image from data, we don't want to override it.
-            del data['image']
-
         for attr in data.keys():
             if not data[attr]:
                 # Set empty string to None
@@ -606,11 +600,6 @@ class Crawler(object):
         else:
             # no changes.
             yield True
-
-        if 'image' in data:
-            # Mark that this image was taken based on this function, later
-            # scans can remove it if it differs.
-            data['image_from_items'] = True
 
         yield kaa.inprogress(self._db.read_lock)
 

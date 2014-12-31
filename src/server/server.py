@@ -80,7 +80,6 @@ class Server(object):
         self._db.register_inverted_index('keywords', min = 2, max = 30)
 
         self._db.register_object_type_attrs("dir",
-            image_from_items = (bool, ATTR_SIMPLE),
             last_crawl = (int, ATTR_SIMPLE),
             title = (unicode, ATTR_SIMPLE),
             artist = (unicode, ATTR_SIMPLE),

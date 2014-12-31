@@ -203,17 +203,11 @@ def _parse(db, item, mtime):
         produced_load = 1
     
         if type == 'dir':
-            attributes['image_from_items'] = False
-            if not attributes.get('image'):
-                for cover in ('cover.jpg', 'cover.png'):
-                    if os.path.isfile(item.filename + cover):
-                        attributes['image'] = item.filename + cover
-                        break
-    
             # TODO: do some more stuff here:
             # Audio directories may have a different cover if there is only
             # one jpg in a dir of mp3 files or a files with 'front' in the name.
             # They need to be added here as special kind of cover
+            pass
     
         elif type == 'image':
             attributes['image'] = item.filename
