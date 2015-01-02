@@ -72,11 +72,14 @@ class UDisks(object):
         self.bus = dbus.SystemBus()
         self.proxy = self.bus.get_object("org.freedesktop.UDisks", "/org/freedesktop/UDisks")
         self.iface = dbus.Interface(self.proxy, "org.freedesktop.UDisks")
-        self.iface.connect_to_signal('DeviceAdded', self._device_udisks_update)
-        self.iface.connect_to_signal('DeviceRemoved', self._device_remove)
-        self.iface.connect_to_signal('DeviceChanged', self._device_udisks_update)
-        for dev in self.iface.EnumerateDevices():
-            self._device_udisks_update(dev)
+        # #####################################################################
+        # The code is broken
+        # #####################################################################
+        # self.iface.connect_to_signal('DeviceAdded', self._device_udisks_update)
+        # self.iface.connect_to_signal('DeviceRemoved', self._device_remove)
+        # self.iface.connect_to_signal('DeviceChanged', self._device_udisks_update)
+        # for dev in self.iface.EnumerateDevices():
+        #     self._device_udisks_update(dev)
 
     @kaa.threaded(kaa.GOBJECT)
     def mount(self, devdict):
@@ -139,12 +142,13 @@ class UDisks(object):
         is the UDisks device path.
         """
         try:
-            dbus = self.bus.get_object(OBJ_UDISKS, path)
-            DeviceIsMediaAvailable = dbus.Get(OBJ_DEVICE, 'DeviceIsMediaAvailable')
-            DeviceIsRemovable = dbus.Get(OBJ_DEVICE, 'DeviceIsRemovable')
-            DeviceFile = dbus.Get(OBJ_DEVICE, 'DeviceFile')
-            IdUuid = dbus.Get(OBJ_DEVICE, 'IdUuid')
-            IdLabel = dbus.Get(OBJ_DEVICE, 'IdLabel')
+            device_obj = self.bus.get_object(OBJ_UDISKS, path)
+            device_props = dbus.Interface(device_obj, dbus.PROPERTIES_IFACE)
+            DeviceIsMediaAvailable = device_props.Get('org.freedesktop.UDisks.Device', "DeviceIsMediaAvailable")
+            DeviceIsRemovable = device_props.Get('org.freedesktop.UDisks.Device', "DeviceIsRemovable")
+            DeviceFile = device_props.Get('org.freedesktop.UDisks.Device', "DeviceFile")
+            IdUuid = device_props.Get('org.freedesktop.UDisks.Device', "IdUuid")
+            IdLabel = device_props.Get('org.freedesktop.UDisks.Device', "IdLabel")
         except Exception, e:
             log.error('unable to get dbus information: %s', e)
             return False
@@ -161,7 +165,7 @@ class UDisks(object):
             # removed, only the media.
             self._device_remove(path)
             return True
-        if dbus.Get(OBJ_DEVICE, 'DeviceIsOpticalDisc'):
+        if device_props.Get('org.freedesktop.UDisks.Device', "DeviceIsOpticalDisc"):
             # Disc in an optical drive
             devdict = {
                 'beacon.id': str(IdUuid) or kaa.metadata.cdrom.status(DeviceFile)[1],
@@ -173,7 +177,7 @@ class UDisks(object):
             }
             self.detected_devices[str(path)] = devdict
             return kaa.MainThreadCallable(self._device_update_media)(devdict)
-        if DeviceIsRemovable and dbus.Get(OBJ_DEVICE, 'DeviceIsPartitionTable'):
+        if DeviceIsRemovable and device_props.Get('org.freedesktop.UDisks.Device', 'DeviceIsPartitionTable'):
             # UDisks reports USB sticks with a filesystem as two
             # different things. The actual device (/dev/sdX) is
             # removable, but of course we cannot mount it. But we have
@@ -182,7 +186,7 @@ class UDisks(object):
             self.partition_tables.append(path)
             return True
         is_filesystem = False
-        if dbus.Get(OBJ_DEVICE, 'DeviceIsPartition'):
+        if device_props.Get('org.freedesktop.UDisks.Device', 'DeviceIsPartition'):
             # Device is a partition. Check if it is on a removable
             # device. If not, do not cover it.
             for parent in self.partition_tables:
@@ -207,12 +211,12 @@ class UDisks(object):
             'volume.mount_point': '',
             'volume.is_disc': False,
             'volume.label': str(IdLabel),
-            'volume.read_only': bool(dbus.Get(OBJ_DEVICE, 'DeviceIsReadOnly')),
+            'volume.read_only': bool(device_props.Get('org.freedesktop.UDisks.Device', 'DeviceIsReadOnly')),
             'block.device': str(DeviceFile),
             'block.parent': str(parent),
             'block.path': str(path)
         }
-        DeviceMountPaths = dbus.Get(OBJ_DEVICE, 'DeviceMountPaths')
+        DeviceMountPaths = device_props.Get('org.freedesktop.UDisks.Device', 'DeviceMountPaths')
         if DeviceMountPaths:
             # mounted at some location
             devdict['volume.mount_point'] = str(DeviceMountPaths[0])
