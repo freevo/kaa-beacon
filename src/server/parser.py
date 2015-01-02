@@ -406,4 +406,5 @@ def add_directory_attributes(db, directory):
     directory._beacon_data.update(data)
 
     # check parent
-    yield add_directory_attributes(db, directory._beacon_parent)
+    if directory._beacon_parent:
+        yield add_directory_attributes(db, directory._beacon_parent)
