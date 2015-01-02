@@ -137,7 +137,7 @@ def _parse(db, item, mtime):
         #
         # Parent checking
         #
-    
+
         parent = item._beacon_parent
         if not parent._beacon_id:
             # There is a parent without id, update the parent now.
@@ -153,26 +153,26 @@ def _parse(db, item, mtime):
             if isinstance(r, kaa.InProgress):
                 r = yield r
             yield r
-    
-    
+
+
         #
         # Metadata parsing
         #
-    
+
         t1 = time.time()
-    
+
         # FIXME: add force parameter from config file:
         # - always force (slow but best result)
         # - never force (faster but maybe wrong)
         # - only force on media 1 (good default)
-    
+
         # Parse metadata in an extra named thread
         metadata = yield parse_thread(item.filename)
         if not metadata:
             metadata = {}
-    
+
         attributes = { 'mtime': mtime, 'image': metadata.get('image') }
-    
+
         if metadata.get('media') == kaa.metadata.MEDIA_DISC and \
                metadata.get('subtype') in db.list_object_types():
             type = metadata['subtype']
@@ -185,7 +185,7 @@ def _parse(db, item, mtime):
             type = 'dir'
         else:
             type = 'file'
-    
+
         if item._beacon_id and type != item._beacon_id[0]:
             # The item changed its type. Adjust the db
             yield kaa.inprogress(db.read_lock)
@@ -194,21 +194,21 @@ def _parse(db, item, mtime):
                 log.error('item to change not in the db anymore')
             log.info('change item %s to %s' % (item._beacon_id, type))
             item._beacon_database_update(data)
-    
-    
+
+
         #
         # Thumbnail / Cover / Image stuff.
         #
-    
+
         produced_load = 1
-    
+
         if type == 'dir':
             # TODO: do some more stuff here:
             # Audio directories may have a different cover if there is only
             # one jpg in a dir of mp3 files or a files with 'front' in the name.
             # They need to be added here as special kind of cover
             pass
-    
+
         elif type == 'image':
             attributes['image'] = item.filename
             if metadata.get('thumbnail'):
@@ -270,16 +270,16 @@ def _parse(db, item, mtime):
             attributes['series'] = metadata.series
             attributes['season'] = metadata.season
             attributes['episode'] = metadata.episode
-            
+
         attributes['metadata'] = metadata
-    
+
         # now call extention plugins
         ext = os.path.splitext(item.filename)[1]
         for function in extention_plugins.get(ext, []) + extention_plugins.get(None, []):
             function(item, attributes, type)
 
         yield kaa.inprogress(db.read_lock)
-    
+
         if attributes.get('image'):
             # create thumbnail
             t = thumbnail.Thumbnail(attributes.get('image'), item._beacon_media)
@@ -295,7 +295,7 @@ def _parse(db, item, mtime):
         # add kaa.metadata results, the db module will add everything known
         # to the db. After that add or update the database.
         #
-    
+
         if item._beacon_id:
             # Update old db entry
             db.update_object(item._beacon_id, **attributes)
@@ -304,22 +304,22 @@ def _parse(db, item, mtime):
             # Create new entry
             obj = db.add_object(type, name=item._beacon_data['name'], parent=parent, overlay=item._beacon_overlay, **attributes)
             item._beacon_database_update(obj)
-    
+
         #
         # Additional track handling
         #
-    
+
         if hasattr(metadata, 'tracks'):
             # The item has tracks, e.g. a dvd image on hd.
             if not metadata.get('type'):
                 log.error('%s metadata has no type', item)
                 yield produced_load
-    
+
             # delete all known tracks before adding new
             result = yield db.query(parent=item)
             for track in result:
                 db.delete_object(track)
-    
+
             if not 'track_%s' % metadata.get('type').lower() in \
                    db.list_object_types():
                 key = metadata.get('type').lower()
@@ -328,7 +328,7 @@ def _parse(db, item, mtime):
             type = 'track_%s' % metadata.get('type').lower()
             for track in metadata.tracks:
                 db.add_object(type, name=str(track.trackno), parent=item, metadata=track)
-    
+
         # parsing done
         log.info('scan %s (%0.3f)' % (item, time.time() - t1))
 
@@ -340,3 +340,70 @@ def _parse(db, item, mtime):
         log.exception('parser error: %s', item)
 
     yield produced_load
+
+
+@kaa.coroutine()
+def add_directory_attributes(db, directory):
+    """
+    Add some extra attributes for a directory recursive. This function
+    checkes album, artist, image and length. When there are changes,
+    go up to the parent and check it, too.
+    """
+    data = { 'length': 0, 'artist': u'', 'album': u'', 'image': '', 'series': '', 'season': '' }
+    check_attr = data.keys()[:]
+    check_attr.remove('length')
+
+    items = { 'video': [], 'audio': [], 'image': [], 'dir': [], 'other': [] }
+    for item in (yield db.query(parent=directory)):
+        t = item._beacon_data.get('type')
+        if t in items:
+            items[t].append(item)
+        else:
+            items['other'].append(item)
+    relevant = []
+    if (not items['video'] and not items['other'] and not items['dir']) and \
+       ((len(items['audio']) > 2, len(items['image']) <= 1) or \
+        (len(items['audio']) > 8, len(items['image']) <= 3)):
+        # Could be music files. Only music files plus maybe
+        # folder/cover images
+        relevant = items['audio']
+    if (not items['audio'] and not items['other'] and not items['dir']) and \
+       (len(items['video']) > 2, len(items['image']) <= 1):
+        # Could be video files. Only video files plus maybe one
+        # folder/cover image
+        relevant = items['video']
+    if not items['audio'] and not items['video'] and not items['other'] and \
+       items['dir'] and len(items['image']) <= 1:
+        # only directories with maybe one folder/cover image
+        relevant = items['dir']
+    for item in relevant:
+        data['length'] += item._beacon_data.get('length', 0) or 0
+        for attr in check_attr:
+            value = item._beacon_data.get(attr, data[attr])
+            if data[attr] == '':
+                data[attr] = value
+            if data[attr] != value:
+                data[attr] = None
+                check_attr.remove(attr)
+
+    if data['image'] and not (data['artist'] or data['album']):
+        # We have neither artist nor album. So this seems to be a video
+        # or an image directory and we don't want to set the image from
+        # maybe one item in that directory as our directory image.
+        data['image'] = None
+    data = dict([ x for x in data.items() if x[1] is not None ])
+    for attr in data.keys():
+        if data[attr] != directory._beacon_data[attr]:
+            break
+    else:
+        # no changes.
+        yield True
+
+    yield kaa.inprogress(db.read_lock)
+
+    # update directory in database
+    db.update_object(directory._beacon_id, **data)
+    directory._beacon_data.update(data)
+
+    # check parent
+    yield add_directory_attributes(db, directory._beacon_parent)

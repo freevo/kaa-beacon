@@ -39,7 +39,7 @@ import kaa
 from kaa.inotify import INotify
 
 # kaa.beacon imports
-from parser import parse
+from parser import parse, add_directory_attributes
 from config import config
 import scheduler
 import utils
@@ -559,73 +559,7 @@ class Crawler(object):
         if not subdirs:
             # No subdirectories that need to be checked. Add some extra
             # attributes based on the found items (recursive back to parents)
-            yield self._add_directory_attributes(directory)
+            yield add_directory_attributes(self._db, directory)
         yield subdirs
 
 
-    @kaa.coroutine()
-    def _add_directory_attributes(self, directory):
-        """
-        Add some extra attributes for a directory recursive. This function
-        checkes album, artist, image and length. When there are changes,
-        go up to the parent and check it, too.
-        """
-        data = { 'length': 0, 'artist': u'', 'album': u'', 'image': '', 'series': '', 'season': '' }
-        check_attr = data.keys()[:]
-        check_attr.remove('length')
-
-        items = { 'video': [], 'audio': [], 'image': [], 'dir': [], 'other': [] }
-        for item in (yield self._db.query(parent=directory)):
-            t = item._beacon_data.get('type')
-            if t in items:
-                items[t].append(item)
-            else:
-                items['other'].append(item)
-        relevant = []
-        if (not items['video'] and not items['other'] and not items['dir']) and \
-           ((len(items['audio']) > 2, len(items['image']) <= 1) or \
-            (len(items['audio']) > 8, len(items['image']) <= 3)):
-            # Could be music files. Only music files plus maybe
-            # folder/cover images
-            relevant = items['audio']
-        if (not items['audio'] and not items['other'] and not items['dir']) and \
-           (len(items['video']) > 2, len(items['image']) <= 1):
-            # Could be video files. Only video files plus maybe one
-            # folder/cover image
-            relevant = items['video']
-        if not items['audio'] and not items['video'] and not items['other'] and \
-           items['dir'] and len(items['image']) <= 1:
-            # only directories with maybe one folder/cover image
-            relevant = items['dir']
-        for item in relevant:
-            data['length'] += item._beacon_data.get('length', 0) or 0
-            for attr in check_attr:
-                value = item._beacon_data.get(attr, data[attr])
-                if data[attr] == '':
-                    data[attr] = value
-                if data[attr] != value:
-                    data[attr] = None
-                    check_attr.remove(attr)
-
-        if data['image'] and not (data['artist'] or data['album']):
-            # We have neither artist nor album. So this seems to be a video
-            # or an image directory and we don't want to set the image from
-            # maybe one item in that directory as our directory image.
-            data['image'] = None
-        data = dict([ x for x in data.items() if x[1] ])
-        for attr in data.keys():
-            if data[attr] != directory._beacon_data[attr]:
-                break
-        else:
-            # no changes.
-            yield True
-
-        yield kaa.inprogress(self._db.read_lock)
-
-        # update directory in database
-        self._db.update_object(directory._beacon_id, **data)
-        directory._beacon_data.update(data)
-
-        # check parent
-        if directory._beacon_parent.filename in self.monitors:
-            yield self._add_directory_attributes(directory._beacon_parent)
