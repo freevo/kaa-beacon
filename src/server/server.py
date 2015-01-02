@@ -82,6 +82,8 @@ class Server(object):
         self._db.register_object_type_attrs("dir",
             last_crawl = (int, ATTR_SIMPLE),
             title = (unicode, ATTR_SIMPLE),
+            series = (unicode, ATTR_SIMPLE),
+            season = (int, ATTR_SIMPLE),
             artist = (unicode, ATTR_SIMPLE),
             album = (unicode, ATTR_SIMPLE),
             length = (float, ATTR_SIMPLE))

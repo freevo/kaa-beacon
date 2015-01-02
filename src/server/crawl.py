@@ -90,7 +90,7 @@ class MonitorList(dict):
         """
         Removes the given directory name and all directories under it from
         monitoring.
-        
+
         This is O(1) with respect to the size of the current monitor list.
         """
         for d in self.keys():
@@ -570,14 +570,37 @@ class Crawler(object):
         checkes album, artist, image and length. When there are changes,
         go up to the parent and check it, too.
         """
-        data = { 'length': 0, 'artist': u'', 'album': u'', 'image': '' }
+        data = { 'length': 0, 'artist': u'', 'album': u'', 'image': '', 'series': '', 'season': '' }
         check_attr = data.keys()[:]
         check_attr.remove('length')
 
-        for child in (yield self._db.query(parent=directory)):
-            data['length'] += child._beacon_data.get('length', 0) or 0
+        items = { 'video': [], 'audio': [], 'image': [], 'dir': [], 'other': [] }
+        for item in (yield self._db.query(parent=directory)):
+            t = item._beacon_data.get('type')
+            if t in items:
+                items[t].append(item)
+            else:
+                items['other'].append(item)
+        relevant = []
+        if (not items['video'] and not items['other'] and not items['dir']) and \
+           ((len(items['audio']) > 2, len(items['image']) <= 1) or \
+            (len(items['audio']) > 8, len(items['image']) <= 3)):
+            # Could be music files. Only music files plus maybe
+            # folder/cover images
+            relevant = items['audio']
+        if (not items['audio'] and not items['other'] and not items['dir']) and \
+           (len(items['video']) > 2, len(items['image']) <= 1):
+            # Could be video files. Only video files plus maybe one
+            # folder/cover image
+            relevant = items['video']
+        if not items['audio'] and not items['video'] and not items['other'] and \
+           items['dir'] and len(items['image']) <= 1:
+            # only directories with maybe one folder/cover image
+            relevant = items['dir']
+        for item in relevant:
+            data['length'] += item._beacon_data.get('length', 0) or 0
             for attr in check_attr:
-                value = child._beacon_data.get(attr, data[attr])
+                value = item._beacon_data.get(attr, data[attr])
                 if data[attr] == '':
                     data[attr] = value
                 if data[attr] != value:
@@ -589,11 +612,7 @@ class Crawler(object):
             # or an image directory and we don't want to set the image from
             # maybe one item in that directory as our directory image.
             data['image'] = None
-
-        for attr in data.keys():
-            if not data[attr]:
-                # Set empty string to None
-                data[attr] = None
+        data = dict([ x for x in data.items() if x[1] ])
         for attr in data.keys():
             if data[attr] != directory._beacon_data[attr]:
                 break
