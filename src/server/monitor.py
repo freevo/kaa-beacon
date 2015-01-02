@@ -41,6 +41,7 @@ from kaa import OneShotTimer, Timer, NotFinished
 # kaa.beacon imports
 from ..item import Item
 from parser import parse
+import utils
 
 # get logging object
 log = logging.getLogger('beacon.monitor')
@@ -114,10 +115,22 @@ class Monitor(object):
             Monitor._master = Master(db)
         Monitor._master.connect(self)
         self._initial_scan()
-
-        # FIXME: how to get updates on directories not monitored by
-        # inotify? Maybe poll the dirs when we have a query with
-        # dirname it it?
+        if not 'parent' in query or query['parent']._beacon_id[0] != 'dir':
+            # Generic search. We hope that everything needed ist
+            # monitored
+            return
+        dirname = query['parent'].filename
+        crawler = query['parent']._beacon_media.crawler
+        if utils.statfs(dirname).f_type in ('nfs', 'smbfs'):
+            # FIXME: how to get updates on directories not monitored by
+            # inotify? Maybe poll the dirs when we have a query with
+            # dirname it it?
+            log.error('monitor on nfs/smbfs mountpoint to supported')
+            return
+        if not dirname in crawler.monitors:
+            # Directory is not in the inotify list. Add it to make
+            # sure changes cause a monitor update
+            crawler.monitors.add(dirname, query['parent'])
 
     def notify_client(self, *args, **kwargs):
         """
@@ -179,14 +192,15 @@ class Monitor(object):
                     self.items = current
                     self.notify_client('changed', True)
                     yield True
-                if not changes and i._beacon_id in changes:
+                if changes and i._beacon_id in changes:
                     small_changes = True
             if small_changes:
                 # only small stuff
-                log.info('monitor %s has changed', self.id)
+                log.info('monitor %s has changed (internal)', self.id)
                 self.items = current
                 self.notify_client('changed', False)
                 yield True
+            log.info('monitor %s unchanged', self.id)
             yield True
 
         # Same length and items are not type Item. This means they are strings

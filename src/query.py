@@ -276,6 +276,8 @@ class Query(object):
         """
         Changed message from server.
         """
+        important_changes = [ 'mtime', 'title', 'series', 'image', 'description' ]
+
         # we have to wait until we are sure that the db is free for
         # read access or the sqlite client will find a lock and waits
         # some time until it tries again. That time is too long, it
@@ -295,12 +297,15 @@ class Query(object):
             c = current.pop(0)
             if c._beacon_data != item._beacon_data:
                 # something changed inside this item.
-                if c._beacon_id != item._beacon_id or \
-                       c._beacon_data.get('mtime') != \
-                       item._beacon_data.get('mtime'):
+                if c._beacon_id != item._beacon_id:
                     self.result = result
                     self.signals['changed'].emit()
                     yield True
+                for attr in important_changes:
+                    if c._beacon_data.get(attr) != item._beacon_data.get(attr):
+                        self.result = result
+                        self.signals['changed'].emit()
+                        yield True
                 # This item was only updated by a client
                 # FIXME: we don't fire the changed signal here. Maybe we need
                 # a second signal to get information about internal changes
