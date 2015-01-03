@@ -45,7 +45,7 @@
 #define PATH_MAX 4096
 #endif
 
-int _png_write (const char *file, DATA32 * ptr, int tw, int th, int sw,
+int _png_write (const char *file, const DATA32 * ptr, int tw, int th, int sw,
 		int sh, char *imformat, int mtime, char *uri)
 {
   FILE *fp = NULL;

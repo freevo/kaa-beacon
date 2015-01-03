@@ -51,7 +51,7 @@ PyTypeObject *Image_PyObject_Type;
 
 
 /* png write function stolen from epsilon (see png.c) */
-extern int _png_write (const char *file, DATA32 * ptr,
+extern int _png_write (const char *file, const DATA32 * ptr,
                        int tw, int th, int sw, int sh, char *imformat,
                        int mtime, char *uri);
 
@@ -270,6 +270,8 @@ void initlibthumb(void)
     void **imlib2_api_ptrs;
 
     m = Py_InitModule("libthumb", thumbnail_methods);
+    if (m == NULL)
+        return;
 
     // Import kaa-imlib2's C api
     imlib2_api_ptrs = get_module_api("kaa.imlib2._Imlib2");
