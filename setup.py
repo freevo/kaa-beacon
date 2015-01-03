@@ -90,5 +90,6 @@ setup(
         'build_requires': 'python-kaa-base >= 0.1.2, imlib2-devel >= 1.2.1, python-devel >= 2.4.0'
     },
     ext_modules = ext_modules,
-    namespace_packages = ['kaa']
+    namespace_packages = ['kaa'],
+    auto_changelog = True,
 )
