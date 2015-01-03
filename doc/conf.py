@@ -11,12 +11,15 @@
 # All configuration values have a default value; values that are commented out
 # serve to show the default value.
 
-import sys, os
+import sys, os, glob, platform
 
 # If your extensions are in another directory, add it here. If the directory
 # is relative to the documentation root, use os.path.abspath to make it
 # absolute, like shown here.
-sys.path.append(os.path.abspath('../build/lib.linux-i686-2.5/kaa'))
+[sys.path.remove(x) for x in sys.path[:] if '/kaa' in x and x != os.getcwd()]
+for _lib in glob.glob('../build/lib.*%s*/kaa' % platform.machine()):
+    sys.path.insert(0, os.path.abspath(_lib))
+
 from beacon.version import VERSION
 
 # General configuration
