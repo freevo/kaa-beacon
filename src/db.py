@@ -2,11 +2,6 @@
 # -----------------------------------------------------------------------------
 # db.py - Beacon database
 # -----------------------------------------------------------------------------
-# $Id$
-#
-# TODO: o Make it possible to override create_file
-#
-# -----------------------------------------------------------------------------
 # kaa.beacon - A virtual filesystem with metadata
 # Copyright (C) 2006-2007 Dirk Meyer
 #
@@ -53,8 +48,6 @@ log = logging.getLogger('beacon.db')
 from file import File
 from item import Item
 
-# The db uses the following helper functions to create the correct item
-
 def create_item(data, parent):
     """
     Create an Item that is neither dir nor file.
@@ -77,7 +70,6 @@ def create_item(data, parent):
     if data.get('scheme'):
         url = data.get('scheme') + url[url.find('://')+3:]
     return Item(dbid, url, data, parent, parent._beacon_media)
-
 
 def create_file(data, parent, overlay=False, isdir=False):
     """
@@ -108,16 +100,13 @@ def create_file(data, parent, overlay=False, isdir=False):
         filename = media.mountpoint
     else:
         raise ValueError('unable to create File item from %s', data)
-
     return File(id, filename, data, parent, media, overlay, isdir)
-
 
 def create_directory(data, parent):
     """
     Create a File object representing a directory.
     """
     return create_file(data, parent, isdir=True)
-
 
 def create_by_type(data, parent, overlay=False, isdir=False):
     """
@@ -146,39 +135,35 @@ class Database(kaa.Object):
         # overlay dir for the beacon
         self.directory = dbdir
         self.medialist = MediaList()
-
         # create or open db
         overlay = os.path.join(self.directory, 'overlays')
         if not os.path.isdir(overlay):
             os.makedirs(overlay)
         self._db = db.Database(self.directory + '/db')
 
-
-    # These methods are stubs on the client side, and will be implemented in
-    # the server db.
     def commit():
+        """
+        Stub on the client side: implemented in the server db
+        """
         pass
 
     def add_object(*args, **kwargs):
+        """
+        Stub on the client side: implemented in the server db
+        """
         pass
 
     def delete_object(*args, **kwargs):
+        """
+        Stub on the client side: implemented in the server db
+        """
         pass
 
     def acquire_read_lock(self):
+        """
+        Stub on the client side: implemented in the server db
+        """
         return kaa.InProgress().finish(None)
-
-
-
-    # Common methods for both client and server.
-
-    def get_directory(self):
-        """
-        Get main beacon directory.
-        """
-        # FIXME: deprecated
-        return self.directory
-
 
     def md5url(self, url, subdir):
         """
@@ -186,7 +171,17 @@ class Database(kaa.Object):
         """
         if url.startswith('http://'):
             subdir += '/%s/' % url[7:url[7:].find('/')+7]
-        return os.path.join(self.directory, subdir, hashlib.md5(url).hexdigest() + os.path.splitext(url)[1])
+        fname = hashlib.md5(url).hexdigest() + os.path.splitext(url)[1]
+        return os.path.join(self.directory, subdir, fname)
+
+    def get_db_info(self):
+        """
+        Returns information about the database.  Look at
+        kaa.db.Database.get_db_info() for more details.
+        """
+        info = self._db.get_db_info()
+        info['directory'] = self.directory
+        return info
 
     # -------------------------------------------------------------------------
     # Query functions
@@ -208,36 +203,31 @@ class Database(kaa.Object):
             del query['recursive']
         # Passed by caller to collect list of deleted items for directory query.
         garbage = query.pop('garbage', None)
-
         # do query based on type
         if query.keys() == ['filename']:
             fname = os.path.realpath(query['filename'])
             return kaa.InProgress().execute(self.query_filename, fname)
-        elif query.keys() == ['id']:
+        if query.keys() == ['id']:
             return kaa.InProgress().execute(self._db_query_id, query['id'])
-        elif sorted(query.keys()) == ['parent', 'recursive']:
+        if sorted(query.keys()) == ['parent', 'recursive']:
             if not query['parent']._beacon_isdir:
                 raise AttributeError('parent is no directory')
             return self._db_query_dir_recursive(query['parent'], garbage)
-        elif 'parent' in query:
+        if 'parent' in query:
             if len(query) == 1:
                 if query['parent']._beacon_isdir:
                     return self._db_query_dir(query['parent'], garbage)
             query['parent'] = query['parent']._beacon_id
-
         if 'media' not in query and query.get('type') != 'media':
             # query only media we have right now
             query['media'] = db.QExpr('in', self.medialist.get_all_beacon_ids())
         elif query.get('media') == 'all':
             del query['media']
-
         if 'attr' in query:
             return kaa.InProgress().execute(self._db_query_attr, query)
-        elif query.get('type') == 'media':
+        if query.get('type') == 'media':
             return kaa.InProgress().execute(self._db.query, **query)
-        else:
-            return self._db_query_raw(query)
-
+        return self._db_query_raw(query)
 
     def query_media(self, media):
         """
@@ -250,29 +240,23 @@ class Database(kaa.Object):
             # object is only an id
             id = media
             media = None
-
         result = self._db.query(type="media", name=id)
         if not result:
             return None
-
         result = result[0]
         if not media:
             return result
-
         # TODO: it's a bit ugly to set url here, but we have no other choice
         media.url = result['content'] + '://' + media.mountpoint
         media.overlay = os.path.join(self.directory, 'overlays', id)
         dbid = ('media', result['id'])
         media._beacon_id = dbid
         root = self._db.query(parent=dbid)[0]
-
         if root['type'] == 'dir':
             media.root = create_directory(root, media)
         else:
             media.root = create_item(root, media)
-
         return result
-
 
     @kaa.coroutine()
     def _db_query_dir(self, parent, garbage):
@@ -289,23 +273,18 @@ class Database(kaa.Object):
                 yield []
         else:
             dirname = parent.filename[:-1]
-
         listing = parent._beacon_listdir()
         items = []
         if parent._beacon_id:
             items = [ create_by_type(i, parent, isdir=i['type'] == 'dir') \
                       for i in self._db.query(parent = parent._beacon_id) ]
-
         # sort items based on name. The listdir is also sorted by name,
         # that makes checking much faster
         items.sort(lambda x,y: cmp(x._beacon_name, y._beacon_name))
-
         # TODO: use parent mtime to check if an update is needed. Maybe call
         # it scan time or something like that. Also make it an option so the
         # user can turn the feature off.
-
         yield self.acquire_read_lock()
-
         pos = -1
         for f, fullname, overlay, stat_res in listing[0]:
             pos += 1
@@ -318,7 +297,6 @@ class Database(kaa.Object):
                     continue
                 items.append(create_file(f, parent, overlay))
                 continue
-
             while pos < len(items) and f > items[pos]._beacon_name:
                 # file deleted
                 i = items[pos]
@@ -333,18 +311,15 @@ class Database(kaa.Object):
                 self.delete_object(i)
                 if garbage is not None:
                     garbage.append(i)
-
             if pos < len(items) and f == items[pos]._beacon_name:
                 # same file
                 continue
-
             # new file
             if isdir:
                 if not overlay:
                     items.insert(pos, create_directory(f, parent))
                 continue
             items.insert(pos, create_file(f, parent, overlay))
-
         if pos + 1 < len(items):
             # deleted files at the end
             for i in items[pos+1-len(items):]:
@@ -358,12 +333,10 @@ class Database(kaa.Object):
                 self.delete_object(i)
                 if garbage is not None:
                     garbage.append(i)
-
         # no need to sort the items again, they are already sorted based
         # on name, let us keep it that way. And name is unique in a directory.
         # items.sort(lambda x,y: cmp(x.url, y.url))
         yield items
-
 
     @kaa.coroutine()
     def _db_query_dir_recursive(self, parent, garbage):
@@ -383,9 +356,7 @@ class Database(kaa.Object):
                 yield []
         else:
             dirname = parent.filename[:-1]
-
         timer = time.time()
-
         items = []
         # A list of all directories we will look at. If a link is in the
         # directory it will be ignored.
@@ -401,12 +372,10 @@ class Database(kaa.Object):
                 # this point to continue later.
                 timer = time.time()
                 yield kaa.NotFinished
-
         # sort items based on name. The listdir is also sorted by name,
         # that makes checking much faster
         items.sort(lambda x,y: cmp(x._beacon_name, y._beacon_name))
         yield items
-
 
     def _db_query_id(self, (type, id), cache=None):
         """
@@ -424,7 +393,6 @@ class Database(kaa.Object):
                     raise AttributeError('bad media %s' % str(i['parent']))
                 return create_item(i, FakeMedia(result[0]['name']))
             return create_directory(i, m)
-
         # query for parent
         pid = i['parent']
         if cache is not None and pid in cache:
@@ -433,12 +401,10 @@ class Database(kaa.Object):
             parent = self._db_query_id(pid)
             if cache is not None:
                 cache[pid] = parent
-
         if i['type'] == 'dir':
             # it is a directory, make a dir item
             return create_directory(i, parent)
         return create_by_type(i, parent)
-
 
     def _db_query_attr(self, query):
         """
@@ -448,14 +414,11 @@ class Database(kaa.Object):
         """
         attr = query['attr']
         del query['attr']
-
         result = self._db.query(attrs=[attr], distinct=True, **query)
         result = [ x[attr] for x in result if x[attr] ]
-
         # sort results and return
         result.sort()
         return result
-
 
     @kaa.coroutine()
     def _db_query_raw(self, query):
@@ -471,13 +434,10 @@ class Database(kaa.Object):
         cache = {}
         counter = 0
         timer = time.time()
-
         for media in self.medialist:
             cache[media._beacon_id] = media
             cache[media.root._beacon_id] = media.root
-
         for r in self._db.query(**query):
-
             # get parent
             pid = r['parent']
             if pid in cache:
@@ -485,7 +445,6 @@ class Database(kaa.Object):
             else:
                 parent = self._db_query_id(pid, cache)
                 cache[pid] = parent
-
             # create item
             if r['type'] == 'dir':
                 # it is a directory, make a dir item
@@ -493,19 +452,16 @@ class Database(kaa.Object):
             else:
                 # file or something else
                 result.append(create_by_type(r, parent))
-
             counter += 1
             if not counter % 50 and time.time() > timer + 0.05:
                 # We used too much time. Call yield NotFinished at
                 # this point to continue later.
                 timer = time.time()
                 yield kaa.NotFinished
-
         if not 'keywords' in query:
             # sort results by url (name is not unique) and return
             result.sort(lambda x,y: cmp(x.url, y.url))
         yield result
-
 
     def query_filename(self, filename):
         """
@@ -517,7 +473,6 @@ class Database(kaa.Object):
         m = self.medialist.get_by_directory(filename)
         if not m:
             raise AttributeError('mountpoint not found')
-
         if (os.path.isdir(filename) and \
             m != self.medialist.get_by_directory(dirname)) or filename == '/':
             # the filename is the mountpoint itself
@@ -532,7 +487,6 @@ class Database(kaa.Object):
                 return create_file(e[0], parent, isdir=e[0]['type'] == 'dir')
         return create_file(basename, parent, isdir=os.path.isdir(filename))
 
-
     def _query_filename_get_dir(self, dirname, media):
         """
         Get database entry for the given directory. Called recursive to
@@ -542,38 +496,19 @@ class Database(kaa.Object):
             # we know that '/' is in the db
             c = self._db.query(type="dir", name='', parent=media._beacon_id)[0]
             return create_directory(c, media)
-
         if dirname == '/':
             raise RuntimeError('media %s not found' % media)
-
         parent = self._query_filename_get_dir(os.path.dirname(dirname), media)
         name = os.path.basename(dirname)
-
         if not parent._beacon_id:
             return create_directory(name, parent)
-
         c = self._db.query(type="dir", name=name, parent=parent._beacon_id)
         if c:
             return create_directory(c[0], parent)
-
         return self._query_filename_get_dir_create(name, parent)
 
-
-
     def _query_filename_get_dir_create(self, name, parent):
+        """
+        Stub on the client side: implemented in the server db
+        """
         return create_directory(name, parent)
-
-
-
-    # -------------------------------------------------------------------------
-    # Database access
-    # -------------------------------------------------------------------------
-
-    def get_db_info(self):
-        """
-        Returns information about the database.  Look at
-        kaa.db.Database.get_db_info() for more details.
-        """
-        info = self._db.get_db_info()
-        info['directory'] = self.directory
-        return info

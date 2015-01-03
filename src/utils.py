@@ -41,10 +41,8 @@ def get_title(name, strip=True):
     """
     if len(name) < 2:
         return name
-
     if strip and name.find('.') > 0 and not name.endswith('.'):
         name = name[:name.rfind('.')]
-
     # TODO: take more hints
     if name.upper() == name:
         name = name.lower()

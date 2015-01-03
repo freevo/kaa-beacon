@@ -2,9 +2,6 @@
 # -----------------------------------------------------------------------------
 # thumbnail.py - client part for thumbnailing
 # -----------------------------------------------------------------------------
-# $Id$
-#
-# -----------------------------------------------------------------------------
 # kaa.beacon - A virtual filesystem with metadata
 # Copyright (C) 2006-2009 Dirk Meyer
 #
@@ -135,10 +132,8 @@ class Thumbnail(object):
             statinfo = os.stat(self.name)
         except OSError:
             return None
-
         if not stat.S_ISREG(statinfo.st_mode) and not stat.S_ISDIR(statinfo.st_mode):
             return None
-
         if check_mtime:
             image = self._get_thumbnail(type)
             if image:
@@ -181,7 +176,8 @@ class Thumbnail(object):
         """
         Check if the image needs an update
         """
-        return not self.failed and (not self._get_thumbnail(NORMAL, True) or not self._get_thumbnail(LARGE, True))
+        return not self.failed and \
+            (not self._get_thumbnail(NORMAL, True) or not self._get_thumbnail(LARGE, True))
 
     @property
     def normal(self):
@@ -252,13 +248,18 @@ class Thumbnail(object):
 
 
 class Client(object):
-
+    """
+    Client to connect to the thumbnail server
+    """
     def __init__(self):
         self.id = None
         self._schedules = []
 
     @kaa.coroutine()
     def connect(self):
+        """
+        Connect to the thumbnail server
+        """
         start = time.time()
         while True:
             try:
@@ -278,6 +279,9 @@ class Client(object):
                 yield kaa.delay(0.01)
 
     def schedule(self, id, filename, imagename, url, priority):
+        """
+        Schedule thumbnail generation on server
+        """
         if not self.id:
             # Not connected yet, schedule job later
             self._schedules.append((id, filename, imagename, url, priority))
@@ -287,6 +291,9 @@ class Client(object):
 
     @kaa.rpc.expose('connect')
     def _server_callback_connected(self, id):
+        """
+        Server callback: connected
+        """
         self.id = id
         for s in self._schedules:
             self.schedule(*s)
@@ -294,10 +301,16 @@ class Client(object):
 
     @kaa.rpc.expose('log.info')
     def _server_callback_debug(self, *args):
+        """
+        Server callback for debugging
+        """
         log.info(*args)
 
     @kaa.rpc.expose('finished')
     def _server_callback_finished(self, id, filename, imagefile):
+        """
+        Server callback: thumbnail finished
+        """
         log.info('finished job %s -> %s', filename, imagefile % ('large' if '%s' in imagefile else ()))
         for job in Job.all[:]:
             if job.id == id:

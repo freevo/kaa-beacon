@@ -2,9 +2,6 @@
 # -----------------------------------------------------------------------------
 # media.py - Medialist handling
 # -----------------------------------------------------------------------------
-# $Id$
-#
-# -----------------------------------------------------------------------------
 # kaa.beacon - A virtual filesystem with metadata
 # Copyright (C) 2006-2007 Dirk Meyer
 #
@@ -59,6 +56,7 @@ class FakeMedia(object):
         references, use a property here.
         """
         return self
+
 
 class Media(object):
     """
@@ -189,7 +187,6 @@ class MediaList(object):
         self._idlist = []
         self._beacon_controller = None
 
-
     def connect(self, controller):
         """
         Connect a controller to the medialist.
@@ -197,7 +194,6 @@ class MediaList(object):
         for media in self._dict.keys():
             self.remove(media)
         self._beacon_controller = controller
-
 
     @kaa.coroutine()
     def add(self, id, prop):
@@ -214,7 +210,6 @@ class MediaList(object):
         self._idlist = [ m._beacon_id[1] for m in self._dict.values() ]
         yield media
 
-
     def remove(self, id):
         """
         Remove a media
@@ -227,13 +222,11 @@ class MediaList(object):
         self._idlist = [ m._beacon_id[1] for m in self._dict.values() ]
         return media
 
-
     def get_by_media_id(self, id):
         """
         Get media object by media id. If the id is not found return None.
         """
         return self._dict.get(id)
-
 
     def get_by_beacon_id(self, id):
         """
@@ -243,7 +236,6 @@ class MediaList(object):
             if m._beacon_id == id:
                 return m
         return None
-
 
     def get_by_directory(self, dirname):
         """
@@ -259,13 +251,11 @@ class MediaList(object):
                 return m
         return None
 
-
     def get_all_beacon_ids(self):
         """
         Return a list of beacon ids for all mounted media.
         """
         return self._idlist
-
 
     def __iter__(self):
         """

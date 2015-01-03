@@ -2,9 +2,6 @@
 # -----------------------------------------------------------------------------
 # file.py - Beacon file item
 # -----------------------------------------------------------------------------
-# $Id$
-#
-# -----------------------------------------------------------------------------
 # kaa.beacon - A virtual filesystem with metadata
 # Copyright (C) 2006-2008 Dirk Meyer
 #
@@ -38,6 +35,7 @@ import time
 import logging
 import threading
 
+# kaa imports
 import kaa
 
 # kaa.beacon imports
@@ -50,7 +48,6 @@ class File(Item):
     """
     A file-based database item
     """
-
     def __init__(self, id, filename, data, parent, media, overlay=False, isdir=False):
         Item.__init__(self, id, 'file://' + filename, data, parent, media)
         if self._beacon_data.get('scheme'):
@@ -106,7 +103,6 @@ class File(Item):
             log.warning(e)
             self._beacon_listdir_cache = time.time(), [], {}
             return [], {}
-
         results_file_map = {}
         timer = time.time()
         for is_overlay, prefix, results in \

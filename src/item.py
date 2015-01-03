@@ -2,9 +2,6 @@
 # -----------------------------------------------------------------------------
 # item.py - Beacon item
 # -----------------------------------------------------------------------------
-# $Id$
-#
-# -----------------------------------------------------------------------------
 # kaa.beacon - A virtual filesystem with metadata
 # Copyright (C) 2006-2007 Dirk Meyer
 #
@@ -47,7 +44,6 @@ class Item(object):
     """
     A generic database item
     """
-
     def __init__(self, beacon_id, url, data, parent, media):
         # url of the item
         self.url = url

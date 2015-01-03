@@ -1,8 +1,6 @@
 # -*- coding: iso-8859-1 -*-
 # -----------------------------------------------------------------------------
 # client.py - Client interface for Beacon
-# -----------------------------------------------------------------------------
-# $Id$
 #
 # This is the client interface to beacon. The server needs to be running.
 # To use the server a Client object must be created. Once created, it is
@@ -32,7 +30,6 @@
 # 02110-1301 USA
 #
 # -----------------------------------------------------------------------------
-
 
 # Python imports
 import os
@@ -65,14 +62,12 @@ class Client(object):
     """
     def __init__(self):
         self._db = None
-
         self.signals = {
             'connect'   : kaa.Signal(),
             'disconnect': kaa.Signal(),
             'media.add' : kaa.Signal(),
             'media.remove': kaa.Signal()
         }
-
         # internal list of active queries, mapping query id to a Query object weakref.
         self._queries = weakref.WeakValueDictionary()
         # internal list of items to update
@@ -84,13 +79,6 @@ class Client(object):
         self.channel.signals["closed"].connect(self._disconnected)
         self.channel.register(self)
         self.rpc = self.channel.rpc
-
-    def __repr__(self):
-        """
-        Convert object to string (usefull for debugging)
-        """
-        return '<beacon.Client>'
-
 
     # -------------------------------------------------------------------------
     # Public API
@@ -108,7 +96,6 @@ class Client(object):
         yield kaa.inprogress(q)
         yield q.get()
 
-
     @kaa.coroutine()
     def query(self, **kwargs):
         """
@@ -119,7 +106,6 @@ class Client(object):
         self._queries[query.id] = query
         yield kaa.inprogress(query)
         yield query
-
 
     def add_item(self, url, type, parent, **kwargs):
         """
@@ -137,7 +123,6 @@ class Client(object):
         rpc.connect(i._beacon_database_update)
         return i
 
-
     def delete_item(self, item):
         """
         Delete non-file item item.
@@ -146,14 +131,12 @@ class Client(object):
             raise RuntimeError('client not connected')
         self.rpc('item_delete', item._beacon_id)
 
-
     @property
     def connected(self):
         """
         Return if the client is connected to a server
         """
         return self.status == CONNECTED
-
 
     def scan(self, directory):
         """
@@ -162,14 +145,12 @@ class Client(object):
         """
         self.rpc('scan_directory', directory)
 
-
     def monitor(self, directory):
         """
         Monitor a directory with subdirectories for changes. This is done in
         the server and will keep the database up to date.
         """
         self.rpc('monitor_directory', directory)
-
 
     @kaa.coroutine()
     def list_media(self, available=True):
@@ -195,11 +176,11 @@ class Client(object):
     def get_db_info(self):
         """
         Gets statistics about the database.
-    
+
         :returns: basic database information
         """
         return self._db.get_db_info()
-    
+
     # -------------------------------------------------------------------------
     # Server connect / disconnect / reconnect handling
     # -------------------------------------------------------------------------
@@ -210,7 +191,6 @@ class Client(object):
         log.info('disconnected from beacon server')
         self.status = DISCONNECTED
         self.signals['disconnect'].emit()
-
 
     def _shutdown(self):
         """
@@ -223,7 +203,6 @@ class Client(object):
         self.rpc = None
         self._db = None
 
-
     # -------------------------------------------------------------------------
     # Media Callback API
     # -------------------------------------------------------------------------
@@ -232,7 +211,6 @@ class Client(object):
         if not self.status == CONNECTED:
             return False
         return self.rpc('eject', dev.id)
-
 
     # -------------------------------------------------------------------------
     # Internal API
@@ -254,7 +232,6 @@ class Client(object):
             kaa.OneShotTimer(self._beacon_update_all).start(0.1)
         self._changed.append(item)
 
-
     def _beacon_update_all(self, item=None):
         """
         Update all items waiting.
@@ -269,7 +246,6 @@ class Client(object):
             i._beacon_changes = {}
         self._changed = []
         self.rpc('item_update', items)
-
 
     @kaa.coroutine()
     def _beacon_media_information(self, media):
@@ -287,7 +263,6 @@ class Client(object):
         finally:
             self.rpc('db_unlock')
 
-
     def _beacon_parse(self, item):
         """
         Parse the item, returns InProgress.
@@ -295,7 +270,6 @@ class Client(object):
         if not self.connected:
             return False
         return self.rpc('item_request', item.filename)
-
 
     # -------------------------------------------------------------------------
     # Server callbacks
@@ -319,7 +293,6 @@ class Client(object):
             # in returning an InProgress object.
             m = yield self._db.medialist.add(id, prop)
             new_media.append(m)
-
         # reconnect query monitors
         for query in self._queries.values():
             if query.monitoring:
@@ -337,7 +310,6 @@ class Client(object):
         self.status = CONNECTED
         self.signals['connect'].emit()
 
-
     @kaa.rpc.expose('notify')
     def notify(self, id, msg, *args):
         """
@@ -346,10 +318,8 @@ class Client(object):
         dependencies. So this function is needed to find the correct Query
         for a request.
         """
-
         if id not in self._queries:
             return log.error('Received notification from beacon server for unknown query id %s', id)
-
         query = self._queries[id]
         if msg == 'progress':
             query.signals['progress'].emit(*args)
@@ -359,7 +329,6 @@ class Client(object):
             query.signals['up-to-date'].emit()
         else:
             log.error('Received notification from beacon server with unknown message type "%s"', msg)
-
 
     @kaa.rpc.expose('device.changed')
     def media_changed(self, id, prop):
@@ -375,7 +344,6 @@ class Client(object):
         # sending the signal to the InProgress return.
         async = self._db.medialist.add(id, prop)
         async.connect_once(self.signals['media.add'].emit)
-
 
     @kaa.rpc.expose('device.removed')
     def media_removed(self, id):
