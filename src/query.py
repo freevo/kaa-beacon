@@ -2,11 +2,8 @@
 # -----------------------------------------------------------------------------
 # query.py - Query class for the client
 # -----------------------------------------------------------------------------
-# $Id$
-#
-# -----------------------------------------------------------------------------
 # kaa.beacon - A virtual filesystem with metadata
-# Copyright (C) 2006-2008 Dirk Meyer
+# Copyright (C) 2006-2008,2015 Dirk Meyer
 #
 # First Edition: Dirk Meyer <dischi@freevo.org>
 # Maintainer:    Dirk Meyer <dischi@freevo.org>
@@ -55,7 +52,6 @@ def register_filter(name, function):
     """
     _query_filter[name] = function
 
-
 def wrap(items, filter):
     """
     Wrap the given list of items with the given filter function
@@ -95,11 +91,9 @@ class Query(object):
         # start inititial query
         self._beacon_start_query(query)
 
-
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
-
 
     def __inprogress__(self):
         """
@@ -107,14 +101,12 @@ class Query(object):
         """
         return self._async
 
-
     @property
     def monitoring(self):
         """
         True if the beacon server is currently monitoring this query.
         """
         return self._beacon_monitoring
-
 
     def monitor(self, enable=True):
         """
@@ -130,7 +122,6 @@ class Query(object):
             self._monitor(enable)
         self._beacon_monitoring = enable
 
-
     def __iter__(self):
         """
         Iterate through the results.
@@ -138,7 +129,6 @@ class Query(object):
         :returns: Iterator over Items
         """
         return self.result.__iter__()
-
 
     def __getitem__(self, pos):
         """
@@ -149,7 +139,6 @@ class Query(object):
         """
         return self.result[pos]
 
-
     def index(self, item):
         """
         Get index of an item in the results. This function will raise an
@@ -157,13 +146,11 @@ class Query(object):
         """
         return self.result.index(item)
 
-
     def __len__(self):
         """
         Get length of results.
         """
         return len(self.result)
-
 
     def get(self, filter=None):
         """
@@ -179,7 +166,6 @@ class Query(object):
         if not filter in _query_filter:
             raise AttributeError('unknown filter')
         return _query_filter[filter](self.result)
-
 
     # -------------------------------------------------------------------------
     # Internal API
@@ -203,7 +189,6 @@ class Query(object):
         else:
             self._rpc('monitor_remove', self._client.id, self.id)
 
-
     @kaa.coroutine()
     def _beacon_start_query(self, query):
         """
@@ -211,9 +196,8 @@ class Query(object):
         """
         if not self._client.connected:
             # wait until the client is connected
-            # FIXME: maybe the server is not connected
+            # FIXME: maybe the server is not running
             yield kaa.inprogress(self._client.signals['connect'])
-
         if 'parent' in query and isinstance(query['parent'], Item) and \
                not query['parent']._beacon_id:
             # The parent we want to use has no database id. This can happen for
@@ -225,20 +209,11 @@ class Query(object):
             if isinstance(async, kaa.InProgress):
                 # Not an InProgress object if it is not file.
                 yield async
-
         # we have to wait until we are sure that the db is free for
         # read access or the sqlite client will find a lock and waits
         # some time until it tries again. That time is too long, it
-        # can take up to two seconds. We also provide our query here
-        # and let the server run it first. This doubles the query time
-        # but we can be sure that all disks are spinned up when we
-        # call the query on the client.
-        q = copy.copy(query)
-        if 'parent' in q:
-            # change the parent to its filename because we cannot move
-            # beacon.Items over kaa.rpc
-            q['parent'] = q['parent'].filename
-        yield self._rpc('db_lock', q)
+        # can take up to two seconds.
+        yield self._rpc('db_lock')
         try:
             self.result = self._client._db.query(**query)
             if isinstance(self.result, kaa.InProgress):
@@ -249,13 +224,11 @@ class Query(object):
         if not self._async.finished:
             self._async.finish(True)
 
-
     def __repr__(self):
         """
         Convert object to string (usefull for debugging)
         """
         return '<beacon.Client.Query for %s>' % self._query
-
 
     def __del__(self):
         """
@@ -277,7 +250,6 @@ class Query(object):
         Changed message from server.
         """
         important_changes = [ 'mtime', 'title', 'series', 'image', 'description' ]
-
         # we have to wait until we are sure that the db is free for
         # read access or the sqlite client will find a lock and waits
         # some time until it tries again. That time is too long, it
