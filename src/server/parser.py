@@ -191,7 +191,7 @@ def _parse(db, item, mtime):
             yield kaa.inprogress(db.read_lock)
             data = db.update_object_type(item._beacon_id, type)
             if not data:
-                log.error('item to change not in the db anymore')
+                log.info('item to change not in the db anymore')
             log.info('change item %s to %s' % (item._beacon_id, type))
             item._beacon_database_update(data)
 
@@ -294,6 +294,13 @@ def _parse(db, item, mtime):
         # to the db. After that add or update the database.
         #
 
+        if not item._beacon_id:
+            # check if for some reasons the same item was parsed
+            # parallel. If so, do not add it again and reuse the id
+            entry = db._db.query(parent=parent._beacon_id, name=item._beacon_data['name'])
+            if entry:
+                log.error('item already in db, re-use beacon_id')
+                item._beacon_id = (entry[0]['type'], entry[0]['id'])
         if item._beacon_id:
             # Update old db entry
             db.update_object(item._beacon_id, **attributes)
