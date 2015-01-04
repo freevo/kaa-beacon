@@ -274,7 +274,9 @@ class Query(object):
                     self.signals['changed'].emit()
                     yield True
                 for attr in important_changes:
-                    if c._beacon_data.get(attr) != item._beacon_data.get(attr):
+                    # use the item get function and not beacon_data
+                    # because title may be generated and different.
+                    if c.get(attr) != item.get(attr):
                         self.result = result
                         self.signals['changed'].emit()
                         yield True
