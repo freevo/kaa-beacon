@@ -203,11 +203,9 @@ def _parse(db, item, mtime):
         produced_load = 1
 
         if type == 'dir':
-            # TODO: do some more stuff here:
-            # Audio directories may have a different cover if there is only
-            # one jpg in a dir of mp3 files or a files with 'front' in the name.
-            # They need to be added here as special kind of cover
-            pass
+            # If the image was detected by the parser, do not override
+            # it in add_directory_attributes
+            attributes['image_from_parser'] = bool(attributes.get('image'))
 
         elif type == 'image':
             attributes['image'] = item.filename
@@ -352,6 +350,12 @@ def add_directory_attributes(db, directory):
     data = { 'length': 0, 'artist': u'', 'album': u'', 'image': '', 'series': '', 'season': '' }
     check_attr = data.keys()[:]
     check_attr.remove('length')
+
+    if directory._beacon_data['image_from_parser'] and \
+       directory._beacon_data['image']:
+        # The directory had an image defined and found by the parser.
+        # Delete image from data, we don't want to override it.
+        del data['image']
 
     items = { 'video': [], 'audio': [], 'image': [], 'dir': [], 'other': [] }
     for item in (yield db.query(parent=directory)):
