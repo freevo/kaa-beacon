@@ -309,8 +309,7 @@ def _parse(db, item, mtime):
                 obj = db._db.query(parent=parent._beacon_id, name=item._beacon_data['name'])[0]
             else:
                 # Create new entry
-                obj = db.add_object(type, name=item._beacon_data['name'], parent=parent, 
-                          overlay=item._beacon_overlay, **attributes)
+                obj = db.add_object(type, name=item._beacon_data['name'], parent=parent, **attributes)
             item._beacon_database_update(obj)
 
         #

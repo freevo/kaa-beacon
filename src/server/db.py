@@ -168,7 +168,6 @@ class Database(RO_Database):
             # object types will have this combined index.
             [('name', 'parent_type', 'parent_id')],
             name = (str, ATTR_SEARCHABLE | ATTR_INVERTED_INDEX, 'keywords', db.split_path),
-            overlay = (bool, ATTR_SIMPLE),
             media = (int, ATTR_SEARCHABLE | ATTR_INDEXED),
             image = (str, ATTR_SIMPLE),
             mtime = (int, ATTR_SIMPLE))
@@ -176,7 +175,6 @@ class Database(RO_Database):
         self._db.register_object_type_attrs('file',
             [('name', 'parent_type', 'parent_id')],
             name = (str, ATTR_SEARCHABLE | ATTR_INVERTED_INDEX, 'keywords', db.split_path),
-            overlay = (bool, ATTR_SIMPLE),
             media = (int, ATTR_SEARCHABLE | ATTR_INDEXED),
             image = (str, ATTR_SIMPLE),
             mtime = (int, ATTR_SIMPLE))
@@ -333,7 +331,6 @@ class Database(RO_Database):
         """
         kwargs['name'] = (str, ATTR_SEARCHABLE | ATTR_INVERTED_INDEX, 'keywords', db.split_path)
         # TODO: mtime may not e needed for subitems like tracks
-        kwargs['overlay'] = (bool, ATTR_SIMPLE)
         kwargs['media'] = (int, ATTR_SEARCHABLE | ATTR_INDEXED)
         if not type.startswith('track_'):
             kwargs['mtime'] = (int, ATTR_SIMPLE)

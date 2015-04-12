@@ -48,19 +48,16 @@ class File(Item):
     """
     A file-based database item
     """
-    def __init__(self, id, filename, data, parent, media, overlay=False, isdir=False):
+    def __init__(self, id, filename, data, parent, media, isdir=False):
         Item.__init__(self, id, 'file://' + filename, data, parent, media)
         if self._beacon_data.get('scheme'):
             # file uses a special scheme like dvd
             self.url = self._beacon_data.get('scheme') + '://' + filename
-        self._beacon_overlay = overlay
         self._beacon_isdir = isdir
         self._beacon_islink = False
         self._beacon_listdir_cache = None
         self.filename = filename
         if isdir:
-            ovdir = filename[len(media.mountpoint):]
-            self._beacon_ovdir = media.overlay + '/' + ovdir
             if os.path.islink(filename[:-1]):
                 self._beacon_islink = True
 
@@ -77,25 +74,20 @@ class File(Item):
 
     def _beacon_listdir(self, cache=False):
         """
-        Internal function to list all files in the directory and the overlay
-        directory. The result is a pair of entries and file map with entries
-        being a list of basename, full filename, is_overlay and stat result.
+        Internal function to list all files in the directory. The
+        result is a pair of entries and file map with entries being a
+        list of basename, full filename and stat result.
 
         Note: this function is thread safe and can be called from the
         mainloop or any thread. This is needed for the client since
         listdir() could block for devices that can spin up and down.
+
         """
         if self._beacon_listdir_cache and cache and \
                 self._beacon_listdir_cache[0] + 3 > time.time():
             # use cached result if we have and caching time is less than
             # three seconds ago
             return self._beacon_listdir_cache[1:]
-        try:
-            # Try to list the overlay directory
-            overlay_results = os.listdir(self._beacon_ovdir)
-        except OSError:
-            # No overlay
-            overlay_results = []
         try:
             # This could block some seconds
             fs_results = os.listdir(self.filename)
@@ -105,25 +97,16 @@ class File(Item):
             return [], {}
         results_file_map = {}
         timer = time.time()
-        for is_overlay, prefix, results in \
-                ((False, self.filename, fs_results),
-                 (True, self._beacon_ovdir, overlay_results)):
-            for r in results:
-                if (is_overlay and r in results_file_map) or r[0] == ".":
-                    continue
-                fullpath = prefix + r
-                try:
-                    # append stat information to every result
-                    statinfo = os.stat(fullpath)
-                    if is_overlay and stat.S_ISDIR(statinfo[stat.ST_MODE]):
-                        # dir in overlay, ignore
-                        log.warning('skip overlay dir %s' % r[1])
-                        continue
-                except (OSError, IOError), e:
-                    # unable to stat file, remove it from list
-                    log.error(e)
-                    continue
-                results_file_map[r] = (r, fullpath, is_overlay, statinfo)
+        for r in fs_results:
+            fullpath = self.filename + r
+            try:
+                # append stat information to every result
+                statinfo = os.stat(fullpath)
+            except (OSError, IOError), e:
+                # unable to stat file, remove it from list
+                log.error(e)
+                continue
+            results_file_map[r] = (r, fullpath, statinfo)
         # We want to avoid lambda on large data sets, so we sort the keys,
         # which is just a list of files.  This is the common case that sort()
         # is optimized for.
@@ -150,13 +133,9 @@ class File(Item):
             # new file for the cover would also effect the directory
             # mtime itself.
             try:
-                mtime = os.stat(self.filename)[stat.ST_MTIME]
+                return os.stat(self.filename)[stat.ST_MTIME]
             except (OSError, IOError):
                 return None
-            try:
-                return max(os.stat(self._beacon_ovdir)[stat.ST_MTIME], mtime)
-            except (OSError, IOError):
-                return mtime
         # Normal file
         fullname = self._beacon_data['name']
         basename, ext = fullname, ''
@@ -180,16 +159,16 @@ class File(Item):
         listdir_file_map = self._beacon_parent._beacon_listdir(cache=True)[1]
         # calculate the new modification time
         try:
-            mtime = listdir_file_map[fullname][3][stat.ST_MTIME]
+            mtime = listdir_file_map[fullname][2][stat.ST_MTIME]
         except KeyError:
             return 0
         for ext in special_exts:
             fname = listdir_file_map.get(basename+ext)
             if fname:
-                mtime += fname[3][stat.ST_MTIME]
+                mtime += fname[2][stat.ST_MTIME]
             fname = listdir_file_map.get(fullname+ext)
             if fname:
-                mtime += fname[3][stat.ST_MTIME]
+                mtime += fname[2][stat.ST_MTIME]
         return mtime
 
     def __repr__(self):

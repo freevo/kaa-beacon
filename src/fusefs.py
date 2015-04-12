@@ -176,7 +176,7 @@ class BeaconFS(fuse.Fuse):
         item = self._filename_map[file]
         attributes = []
         for key in item.keys():
-            if key in ('parent', 'media', 'parent_type', 'overlay',
+            if key in ('parent', 'media', 'parent_type', 
                        'parent_id', 'mtime', 'computed_id', 'id'):
                 continue
             value = item.get(key)

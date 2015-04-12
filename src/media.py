@@ -147,9 +147,8 @@ class Media(object):
         self._beacon_isdir = False
         if media['content'] == 'file':
             self._beacon_isdir = True
-        self.thumbnails = os.path.join(self.overlay, '.thumbnails')
-        if self.mountpoint == '/':
-            self.thumbnails = os.path.join(os.environ['HOME'], '.thumbnails')
+        # TODO: choose self.thumbnails for media not /
+        self.thumbnails = os.path.join(os.environ['HOME'], '.thumbnails')
         if self.root.get('title'):
             self.label = self.root.get('title')
         elif prop.get('volume.label'):

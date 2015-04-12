@@ -71,7 +71,7 @@ def create_item(data, parent):
         url = data.get('scheme') + url[url.find('://')+3:]
     return Item(dbid, url, data, parent, parent._beacon_media)
 
-def create_file(data, parent, overlay=False, isdir=False):
+def create_file(data, parent, isdir=False):
     """
     Create a File object representing either a file or directory.
     """
@@ -100,15 +100,15 @@ def create_file(data, parent, overlay=False, isdir=False):
         filename = media.mountpoint
     else:
         raise ValueError('unable to create File item from %s', data)
-    return File(id, filename, data, parent, media, overlay, isdir)
+    return File(id, filename, data, parent, media, isdir)
 
 def create_directory(data, parent):
     """
     Create a File object representing a directory.
     """
-    return create_file(data, parent, isdir=True)
+    return create_file(data, parent, True)
 
-def create_by_type(data, parent, overlay=False, isdir=False):
+def create_by_type(data, parent, isdir=False):
     """
     Create file, directory or any other kind of item.
     If the data indicates it is not a file or the parent is not
@@ -116,7 +116,7 @@ def create_by_type(data, parent, overlay=False, isdir=False):
     """
     if (data.get('name').find('://') > 0) or (parent and not parent.isdir):
         return create_item(data, parent)
-    return create_file(data, parent, overlay, isdir)
+    return create_file(data, parent, isdir)
 
 
 class Database(kaa.Object):
@@ -131,14 +131,10 @@ class Database(kaa.Object):
         Init function
         """
         super(Database, self).__init__()
-        # internal db dir, it contains the real db and the
-        # overlay dir for the beacon
+        # internal db dir, it contains the real
         self.directory = dbdir
         self.medialist = MediaList()
         # create or open db
-        overlay = os.path.join(self.directory, 'overlays')
-        if not os.path.isdir(overlay):
-            os.makedirs(overlay)
         self._db = db.Database(self.directory + '/db')
 
     def commit():
@@ -248,7 +244,6 @@ class Database(kaa.Object):
             return result
         # TODO: it's a bit ugly to set url here, but we have no other choice
         media.url = result['content'] + '://' + media.mountpoint
-        media.overlay = os.path.join(self.directory, 'overlays', id)
         dbid = ('media', result['id'])
         media._beacon_id = dbid
         root = self._db.query(parent=dbid)[0]
@@ -276,7 +271,7 @@ class Database(kaa.Object):
         listing = parent._beacon_listdir()
         items = []
         if parent._beacon_id:
-            items = [ create_by_type(i, parent, isdir=i['type'] == 'dir') \
+            items = [ create_by_type(i, parent, i['type'] == 'dir') \
                       for i in self._db.query(parent = parent._beacon_id) ]
         # sort items based on name. The listdir is also sorted by name,
         # that makes checking much faster
@@ -286,16 +281,15 @@ class Database(kaa.Object):
         # user can turn the feature off.
         yield self.acquire_read_lock()
         pos = -1
-        for f, fullname, overlay, stat_res in listing[0]:
+        for f, fullname, stat_res in listing[0]:
             pos += 1
             isdir = stat.S_ISDIR(stat_res[stat.ST_MODE])
             if pos == len(items):
                 # new file at the end
                 if isdir:
-                    if not overlay:
-                        items.append(create_directory(f, parent))
+                    items.append(create_directory(f, parent))
                     continue
-                items.append(create_file(f, parent, overlay))
+                items.append(create_file(f, parent))
                 continue
             while pos < len(items) and f > items[pos]._beacon_name:
                 # file deleted
@@ -316,10 +310,9 @@ class Database(kaa.Object):
                 continue
             # new file
             if isdir:
-                if not overlay:
-                    items.insert(pos, create_directory(f, parent))
+                items.insert(pos, create_directory(f, parent))
                 continue
-            items.insert(pos, create_file(f, parent, overlay))
+            items.insert(pos, create_file(f, parent))
         if pos + 1 < len(items):
             # deleted files at the end
             for i in items[pos+1-len(items):]:
@@ -465,7 +458,7 @@ class Database(kaa.Object):
 
     def query_filename(self, filename):
         """
-        Return item for filename, can't be in overlay. This function will
+        Return item for filename, This function will
         never return an InProgress object.
         """
         dirname = os.path.dirname(filename)
@@ -484,8 +477,8 @@ class Database(kaa.Object):
             e = self._db.query(parent=parent._beacon_id, name=basename)
             if e:
                 # entry is in the db
-                return create_file(e[0], parent, isdir=e[0]['type'] == 'dir')
-        return create_file(basename, parent, isdir=os.path.isdir(filename))
+                return create_file(e[0], parent, e[0]['type'] == 'dir')
+        return create_file(basename, parent, os.path.isdir(filename))
 
     def _query_filename_get_dir(self, dirname, media):
         """

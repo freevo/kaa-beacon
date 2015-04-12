@@ -11,10 +11,6 @@
 
 4. Move special_exts in File._beacon_mtime to kaa.metadata
 
-5. Use inotify on overlay directories. Or maybe remove the overlay
-   stuff completly. I do not think it is used anywhere. This would
-   speed up beacon.
-
 6. Try to reduce algorithm complexity in certain places.  e.g. maybe Query
    objects keep a dict of items keyed on url rather than a sorted item list.
 

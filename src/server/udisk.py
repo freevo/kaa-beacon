@@ -270,9 +270,6 @@ class UDisks(object):
             yield True
         # add the device to the MediaList, returns Media object
         m = yield self._db.medialist.add(id, devdict)
-        # create overlay directory structure
-        if not os.path.isdir(m.overlay):
-            os.makedirs(m.overlay, 0700)
         for d in ('large', 'normal', 'fail/beacon'):
             dirname = os.path.join(m.thumbnails, d)
             if not os.path.isdir(dirname):
