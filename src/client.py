@@ -38,7 +38,6 @@ import weakref
 
 # kaa imports
 import kaa
-from kaa.utils import property
 import kaa.rpc
 
 # kaa.beacon imports

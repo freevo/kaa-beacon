@@ -42,7 +42,6 @@ import stat
 import kaa
 import kaa.rpc
 from kaa.weakref import weakref
-from kaa.utils import property
 import kaa.metadata
 
 # kaa.thumb imports

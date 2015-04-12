@@ -33,7 +33,6 @@ import logging
 
 # kaa imports
 import kaa
-from kaa.utils import property
 
 # kaa.beacon imports
 from item import Item
