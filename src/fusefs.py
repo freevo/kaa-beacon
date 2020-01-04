@@ -6,9 +6,9 @@
 # Copyright (C) 2006,2008 Dirk Meyer
 #
 # First Edition: Jason Tackaberry <tack@sault.org>
-#                Dirk Meyer <dischi@freevo.org>
+#                Dirk Meyer <https://github.com/Dischi>
 # Maintainer:    Jason Tackaberry <tack@sault.org>
-#                Dirk Meyer <dischi@freevo.org>
+#                Dirk Meyer <https://github.com/Dischi>
 #
 # Please see the file AUTHORS for a complete list of authors.
 #
